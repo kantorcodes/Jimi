@@ -1,6 +1,8 @@
 package io.leavesfly.jimi.tool.core;
 
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
+import io.leavesfly.jimi.harness.HarnessChange;
+import io.leavesfly.jimi.harness.HarnessJournal;
 import io.leavesfly.jimi.tool.AbstractTool;
 import io.leavesfly.jimi.tool.ToolResult;
 import io.leavesfly.jimi.skill.SkillRegistry;
@@ -55,8 +57,36 @@ public class SkillsTool extends AbstractTool<SkillsTool.Params> {
     @Autowired(required = false)
     private SkillsInstaller skillsInstaller;
 
+    /** 审计日志，为 null 时仅跳过审计、不影响技能写入 */
+    @Autowired(required = false)
+    private HarnessJournal harnessJournal;
+
+    /** 工作目录绝对路径，审计日志存储位置的基准 */
+    private String workDirPath;
+
     public SkillsTool() {
         super(NAME, DESCRIPTION, Params.class);
+    }
+
+    /**
+     * 设置工作目录（运行时注入），缺失时技能变更不进审计
+     */
+    public void setWorkDirPath(String workDirPath) {
+        this.workDirPath = workDirPath;
+    }
+
+    /**
+     * 记录技能变更到 harness 审计日志
+     * <p>
+     * 快照内容为 SKILL.md 的正文部分（不含 frontmatter），与
+     * {@code SkillRegistry.createSkill/editSkill} 接受的 content 语义一致。
+     */
+    private void recordSkillChange(HarnessChange.Op op, String skillName, String before, String after) {
+        if (harnessJournal == null || workDirPath == null) {
+            return;
+        }
+        harnessJournal.record(workDirPath, "manual", HarnessChange.Kind.SKILL,
+                op, skillName, before, after);
     }
 
     @Override
@@ -248,6 +278,7 @@ public class SkillsTool extends AbstractTool<SkillsTool.Params> {
 
         try {
             SkillSpec created = skillRegistry.createSkill(name, description, content);
+            recordSkillChange(HarnessChange.Op.CREATE, name, null, created.getContent());
             
             return ToolResult.ok(
                     String.format("技能 '%s' 创建成功！\n\n路径: %s",
@@ -280,7 +311,9 @@ public class SkillsTool extends AbstractTool<SkillsTool.Params> {
         }
 
         try {
+            String before = skillRegistry.findByName(name).map(SkillSpec::getContent).orElse(null);
             SkillSpec edited = skillRegistry.editSkill(name, content);
+            recordSkillChange(HarnessChange.Op.UPDATE, name, before, edited.getContent());
             
             return ToolResult.ok(
                     String.format("技能 '%s' 更新成功！", edited.getName()),
@@ -321,7 +354,9 @@ public class SkillsTool extends AbstractTool<SkillsTool.Params> {
         }
 
         try {
+            String before = skill.getContent();
             skillRegistry.uninstall(name);
+            recordSkillChange(HarnessChange.Op.DELETE, name, before, null);
             
             return ToolResult.ok(
                     String.format("技能 '%s' 已删除。", name),

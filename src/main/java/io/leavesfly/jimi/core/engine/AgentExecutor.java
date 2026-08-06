@@ -9,6 +9,7 @@ import io.leavesfly.jimi.core.engine.toolcall.ToolErrorTracker;
 import io.leavesfly.jimi.core.hook.HookContext;
 import io.leavesfly.jimi.core.hook.HookRegistry;
 import io.leavesfly.jimi.core.hook.HookType;
+import io.leavesfly.jimi.harness.RefineEngine;
 import io.leavesfly.jimi.memory.MemoryConsolidator;
 import io.leavesfly.jimi.memory.MemoryExtractor;
 import io.leavesfly.jimi.memory.MemoryManager;
@@ -59,6 +60,7 @@ public class AgentExecutor {
     private final ContextManager contextManager;
     private final ToolErrorTracker toolErrorTracker;
     private final HookRegistry hookRegistry;
+    private final RefineEngine refineEngine;
 
     private AgentExecutor(Builder builder) {
         this.agent = Objects.requireNonNull(builder.agent, "agent is required");
@@ -75,6 +77,7 @@ public class AgentExecutor {
         this.contextManager = Objects.requireNonNull(builder.contextManager, "contextManager is required");
         this.toolErrorTracker = builder.toolErrorTracker != null ? builder.toolErrorTracker : new ToolErrorTracker();
         this.hookRegistry = builder.hookRegistry;
+        this.refineEngine = builder.refineEngine;
     }
 
     public static Builder builder() {
@@ -123,9 +126,10 @@ public class AgentExecutor {
     // ==================== ReAct 循环 ====================
 
     private Mono<Void> runReactLoop() {
-        // 创建 ToolDispatcher（注入 HookRegistry）
+        // 创建 ToolDispatcher（注入 HookRegistry、工具输出配置与会话 ID）
         ToolDispatcher toolDispatcher = new ToolDispatcher(
-                toolRegistry, jimiRuntime.getWorkDir(), wire, toolErrorTracker, hookRegistry);
+                toolRegistry, jimiRuntime.getWorkDir(), wire, toolErrorTracker, hookRegistry,
+                jimiRuntime.getConfig().getToolOutput(), jimiRuntime.getSession().getId());
 
         // 创建 ReactLoop
         int maxSteps = jimiRuntime.getConfig().getLoopControl().getMaxStepsPerRun();
@@ -152,9 +156,11 @@ public class AgentExecutor {
             log.info("Agent '{}' step {}/{}", agentName != null ? agentName : "main", localStep, globalStep);
         });
 
-        // 步骤前检查（上下文压缩）
+        // 步骤前检查（上下文压缩 + harness 状态快照刷新）
         reactLoop.setBeforeStep(stepNo ->
                 contextManager.checkAndCompact(context, jimiRuntime.getLlm(), compaction)
+                        .then(contextManager.refreshHarnessState(
+                                context, jimiRuntime.getWorkDir().toAbsolutePath().toString()))
                         .then(context.checkpoint(false))
                         .then());
 
@@ -212,6 +218,21 @@ public class AgentExecutor {
             } catch (Exception e) {
                 log.warn("Memory extraction/consolidation failed, skipping", e);
             }
+        }
+
+        // 从成功轨迹中沉淀可复用战术（默认关闭，见 refine.enabled / refine.trigger_on_success）
+        if (refineEngine != null && !isSubagent && refineEngine.isTriggerOnSuccess()) {
+            String workDirPath = jimiRuntime.getWorkDir().toAbsolutePath().toString();
+            refineEngine.runOnRecentTrajectory(workDirPath, "task-success",
+                            "本轮任务已成功完成，请从轨迹中提炼可复用的战术")
+                    .subscribe(
+                            result -> {
+                                if (result.isApplied()) {
+                                    log.info("Refine applied after successful task: change #{}",
+                                            result.change().getId());
+                                }
+                            },
+                            error -> log.warn("Refine after successful task failed", error));
         }
 
         executionState.incrementTasksCompleted();
@@ -287,6 +308,7 @@ public class AgentExecutor {
         private MemoryManager memoryManager;
         private ToolErrorTracker toolErrorTracker;
         private HookRegistry hookRegistry;
+        private RefineEngine refineEngine;
         private boolean isSubagent = false;
 
         public Builder agent(Agent agent) { this.agent = agent; return this; }
@@ -299,6 +321,7 @@ public class AgentExecutor {
         public Builder memoryManager(MemoryManager memoryManager) { this.memoryManager = memoryManager; return this; }
         public Builder toolErrorTracker(ToolErrorTracker tracker) { this.toolErrorTracker = tracker; return this; }
         public Builder hookRegistry(HookRegistry hookRegistry) { this.hookRegistry = hookRegistry; return this; }
+        public Builder refineEngine(RefineEngine refineEngine) { this.refineEngine = refineEngine; return this; }
         public Builder isSubagent(boolean isSubagent) { this.isSubagent = isSubagent; return this; }
 
         public AgentExecutor build() { return new AgentExecutor(this); }

@@ -9,9 +9,9 @@ system_prompt: system_prompt.md
 system_prompt_args: { }
 
 # 指定模型（可选，如果不指定则使用全局默认模型）
-#model: qwen3.5-plus
+model: qwen3.5-plus
 
-model: qwen3-max
+#model: qwen3-max
 
 
 #model: cursor-opus
@@ -45,14 +45,16 @@ tools:
   #→ 其他:
   - AskHuman
   - AsyncTask
-  - CallGraphTool
-  - CodeLocateTool
-  - ImpactAnalysisTool
   - MetaTool
   - SetTodoList
   - SubAgentTool
+  - SubagentResult
   - TeamAgentTool
   - Skills
+
+  #→ harness 与记忆（写入后当场生效，变更可审计可回滚）:
+  - Memory
+  - Harness
 
 # 子 Agent 配置（Subagent 模式：独立子任务，无横向通信）
 subagents:

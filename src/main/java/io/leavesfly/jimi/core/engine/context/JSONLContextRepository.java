@@ -198,7 +198,7 @@ public class JSONLContextRepository implements ContextRepository {
                 log.info("Reverted to checkpoint {}: {} messages, {} tokens", 
                         checkpointId, messages.size(), tokenCount);
                 
-                return new RestoredContext(messages, tokenCount, nextCheckpointId);
+                return new RestoredContext(messages, tokenCount, nextCheckpointId, rotatedPath);
                 
             } catch (IOException e) {
                 log.error("Failed to revert to checkpoint", e);

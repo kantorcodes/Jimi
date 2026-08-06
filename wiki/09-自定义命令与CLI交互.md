@@ -52,7 +52,7 @@
                     ┌─────────────────┴─────────────────┐
                     │                                   │
           ┌─────────▼──────────┐           ┌────────────▼─────────────┐
-          │ 18 个内建          │           │ ConfigurableCommandHandler │
+          │ 16 个内建          │           │ ConfigurableCommandHandler │
           │ @Component         │           │  (适配 CustomCommandSpec)  │
           │ CommandHandler     │           │                            │
           │ (handlers/*)       │           │  由 CustomCommandRegistry  │
@@ -66,7 +66,7 @@
 
 1. `CommandRegistry` 本身既是注册表**又**是分派器，源码里**没有**叫 `CommandDispatcher` 的类（`MetaCommandProcessor.process()` 直接调用 `commandRegistry.execute(name, ctx)`）。
 2. 输入的"分派"发生在 `ShellUI#processInput`，通过 **3 个 `InputProcessor`** 的优先级排序实现；命令系统的"分派"则发生在 `CommandRegistry.execute`。两级分派职责分明。
-3. 内建 18 个 handler 与自定义命令 handler **共存于同一个 `handlers` Map**。自定义命令不仅能新增，**还能覆盖同名内建命令**（`register()` 发现重名时仅打印 `log.warn("Command handler already registered: {}, overwriting", name)` 后直接覆盖）。
+3. 内建 16 个 handler 与自定义命令 handler **共存于同一个 `handlers` Map**。自定义命令不仅能新增，**还能覆盖同名内建命令**（`register()` 发现重名时仅打印 `log.warn("Command handler already registered: {}, overwriting", name)` 后直接覆盖）。
 
 ---
 
@@ -361,7 +361,7 @@ public void execute(String commandName, CommandContext context) throws Exception
 
 ---
 
-## 5 · 18 个内建命令详表
+## 5 · 16 个内建命令详表
 
 以下表格按**源码实际声明的 `getName`/`getAliases`/`getCategory`/`getUsage`/`getDescription`** 整理，每一条都来自 `command/handlers/*.java` 的亲读。
 
@@ -382,37 +382,14 @@ public void execute(String commandName, CommandContext context) throws Exception
 | 13 | `agents` | — | general | `/agents [agent-name \| run <agent-name>]` | 管理和查看系统中的代理 | `AgentsCommandHandler` |
 | 14 | `memory` | `mem` | **knowledge** | `/memory [read\|topics\|search <query>\|write <section> <content>\|clear]` | 管理项目长期记忆 | `MemoryCommandHandler` |
 | 15 | `commands` | `cmds` | **system** | `/commands [list\|<name>\|reload\|enable <name>\|disable <name>]` | 管理自定义命令 | `CommandsCommandHandler` |
-| 16 | `graph` | `g` | general（默认，未 override） | 见下方多行文本 | 代码图管理 | `GraphCommandHandler`（详见 08 篇） |
-| 17 | `index` | — | **`上下文管理`**（中文 category key！） | `/index`（**未 override，沿用默认**） | 向量索引管理 - 支持: build/query/stats/clear | `IndexCommandHandler`（详见 08 篇） |
-| 18 | `wiki` | — | **documentation** | `/wiki [init\|validate\|delete]` | 管理项目Wiki文档系统 | `WikiCommandHandler` |
+| 16 | `wiki` | — | **documentation** | `/wiki [init\|validate\|delete]` | 管理项目Wiki文档系统 | `WikiCommandHandler` |
 
-**`/graph` 的 `getUsage()` 返回完整多行文本**（源码逐字抄录）：
-
-```
-/graph <subcommand> [args]
-  build [path]  - 构建代码图 (默认当前目录)
-  rebuild       - 重新构建代码图
-  stats         - 显示图统计信息
-  clear         - 清空代码图
-  status        - 显示图状态
-  save          - 保存代码图到磁盘
-  load          - 从磁盘加载代码图
-  query <type> <query> - 查询代码图
-    query symbol <name> [-t type]  - 按符号名称查询
-    query file <path>              - 按文件路径查询
-    query callers <methodId>       - 查找方法调用者
-    query callees <methodId>       - 查找方法被调用者
-```
-
-**`/index` 的 `getUsage()`** 在源码中**没有重写**，沿用 `CommandHandler` 接口默认实现 `"/" + getName() = "/index"`——这意味着 `/help` 命令如果依赖 `getUsage()` 打印帮助，`/index` 的用法说明**完全缺失**，用户只能通过阅读 `IndexCommandHandler#execute` 的分支代码或 08 篇文档才能知道可用子命令。
-
-**未声明 `getCategory`** 的条目（1–13 以及 #16 `graph`）全部落在默认 `"general"` 分类。特别地：
+**未声明 `getCategory`** 的条目（1–13）全部落在默认 `"general"` 分类。特别地：
 - 条目 #14 `/memory` 使用 `"knowledge"`（英文）
 - 条目 #15 `/commands` 使用 `"system"`（英文）
-- 条目 #17 `/index` 使用 `"上下文管理"`（**中文字符串**，与其他 category key 命名风格不一致）
-- 条目 #18 `/wiki` 使用 `"documentation"`（英文）
+- 条目 #16 `/wiki` 使用 `"documentation"`（英文）
 
-**观察**：`CommandRegistry.categorizedHandlers` 是以 category 字符串为 key 的 Map，它会原样保留中英混杂的分类名——目前没有任何消费方对 category 做聚合展示（`/commands list` 读的是自定义命令侧，不是 `CommandRegistry.categorizedHandlers`），所以这种不一致暂时没有可观察影响，但属于**代码级的命名风格分歧**。
+**观察**：`CommandRegistry.categorizedHandlers` 是以 category 字符串为 key 的 Map，但目前没有任何消费方对 category 做聚合展示（`/commands list` 读的是自定义命令侧，不是 `CommandRegistry.categorizedHandlers`），所以分类名实际上是**预留但未被消费**的字段。
 
 **`/help` 的帮助文案 vs 真实实现**：`HelpCommandHandler#execute` 硬编码的帮助文本提到了 `/quit`、`/exit`、`/v` 等别名，但源码里：
 - `quit`/`exit` 被 `MetaCommandProcessor` 特殊处理（直接返 false 退出），**并无对应的 `QuitCommandHandler`**。
@@ -433,7 +410,6 @@ public void execute(String commandName, CommandContext context) throws Exception
 | `/config` | ✅ | — |
 | `/tools` | ✅ | — |
 | `/init` | ✅ | — |
-| `/graph, /g` | ✅ | — |
 | `/memory, /mem` | ✅ | — |
 | `/clear, /cls` | ✅ | — |
 | `/history` | ✅ | — |
@@ -443,7 +419,7 @@ public void execute(String commandName, CommandContext context) throws Exception
 | `/commands` | ✅ | — |
 | `/theme` | ✅ | — |
 
-**文案中未提及、但实际存在的命令**：`/new`、`/wiki`、`/index`——这是**帮助文案漏收**的典型简化。用户只能通过 Tab 补全或 `/commands list` 以外的途径发现它们。
+**文案中未提及、但实际存在的命令**：`/new`、`/wiki`——这是**帮助文案漏收**的典型简化。用户只能通过 Tab 补全或 `/commands list` 以外的途径发现它们。
 
 ### 5.2 各内建命令 `execute` 的骨架摘要
 
@@ -464,7 +440,6 @@ public void execute(String commandName, CommandContext context) throws Exception
 - **`/agents`**：见 5.3。
 - **`/memory`**：见 10 篇（记忆管理）。
 - **`/commands`**：见 6.3。
-- **`/graph` / `/index`**：见 08 篇。
 - **`/wiki`**：见 5.4。
 
 ### 5.3 `/agents` 三种调用形式

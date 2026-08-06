@@ -17,8 +17,5 @@ tools:
   - FetchURL
   - SearchWeb
   - AskHuman
-  - CallGraphTool
-  - CodeLocateTool
-  - ImpactAnalysisTool
   - MetaTool
   - SetTodoList

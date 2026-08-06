@@ -3,6 +3,7 @@ package io.leavesfly.jimi.core.engine.context;
 import io.leavesfly.jimi.llm.message.Message;
 import reactor.core.publisher.Mono;
 
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -52,7 +53,7 @@ public interface ContextRepository {
      * 回退到指定检查点
      * 
      * @param checkpointId 目标检查点 ID
-     * @return 回退后的上下文数据
+     * @return 回退后的上下文数据，其中 {@code archivedPath} 指向保留了回退前完整历史的归档文件
      */
     Mono<RestoredContext> revertToCheckpoint(int checkpointId);
     
@@ -64,10 +65,21 @@ public interface ContextRepository {
         private final int tokenCount;
         private final int nextCheckpointId;
         
+        /**
+         * 回退前历史的归档文件路径；仅 {@link #revertToCheckpoint(int)} 会填充，
+         * {@link #restore()} 场景下为 {@code null}。
+         */
+        private final Path archivedPath;
+        
         public RestoredContext(List<Message> messages, int tokenCount, int nextCheckpointId) {
+            this(messages, tokenCount, nextCheckpointId, null);
+        }
+        
+        public RestoredContext(List<Message> messages, int tokenCount, int nextCheckpointId, Path archivedPath) {
             this.messages = messages;
             this.tokenCount = tokenCount;
             this.nextCheckpointId = nextCheckpointId;
+            this.archivedPath = archivedPath;
         }
         
         public List<Message> getMessages() {
@@ -80,6 +92,10 @@ public interface ContextRepository {
         
         public int getNextCheckpointId() {
             return nextCheckpointId;
+        }
+        
+        public Path getArchivedPath() {
+            return archivedPath;
         }
     }
 }

@@ -68,17 +68,6 @@ execution:
 
 支持 **15 种 Hook 事件**（对齐 Claude Code 9 种 + Jimi 扩展 3 种 + Agent Teams 扩展 3 种），覆盖工具调用前后、Agent 切换、会话开始/结束、错误处理等多种触发时机。[详细文档](docs/HOOKS.md)
 
-### 🔍 代码图谱系统
-
-基于AST的代码理解与导航：
-
-- AST解析：Java代码结构化分析
-- 混合检索：图检索 + 向量检索
-- 影响分析：代码修改影响范围评估
-- 智能定位：自然语言快速定位代码
-
-[详细文档](docs/GRAPH_GUIDE.md)
-
 ### ⚡ 自定义命令
 
 YAML配置即可扩展命令：
@@ -101,10 +90,6 @@ execution:
 - 结构化恢复：父子Agent语义连续
 - Token优化：节省30-50% Token消耗
 
-### 🌐 RAG检索增强
-
-本地向量索引，自动检索相关代码注入上下文。[详细文档](docs/RAG配置指南.md)
-
 ### 🔌 多模型支持
 
 通过统一的 `ChatProvider` 抽象支持 9 种 Provider：`openai`、`kimi`（Moonshot）、`qwen`（通义千问）、`deepseek`、`claude`、`ollama`、`glm`（智谱）、`minimax`、`cursor`。基于 OpenAI 兼容协议，支持流式响应、Caffeine 缓存、Token 估算与限流。
@@ -115,12 +100,11 @@ execution:
 
 ### 🛠️ 丰富工具生态
 
-内置 **18 个原生工具** + MCP 动态工具，覆盖六大类：
+内置 **15 个原生工具** + MCP 动态工具，覆盖五大类：
 
 - **文件操作**（5）：`ReadFile`、`WriteFile`、`StrReplaceFile`、`Grep`、`Glob`
 - **Shell执行**（1）：`BashTool` 命令执行、后台任务
 - **网络工具**（2）：`FetchURL` 网页抓取、`WebSearch` 搜索
-- **代码图谱**（3）：`CodeLocate` 智能定位、`CallGraph` 调用链、`ImpactAnalysis` 影响分析
 - **任务管理**（2）：`SubAgent` 同步/异步子代理、`TeamAgent` 团队协作
 - **知识与交互**（5）：`Memory`、`Skills`、`SetTodoList`、`AskHuman`、`MetaTool`
 
@@ -281,7 +265,6 @@ cd Jimi
 | `/agents` | Agent列表 |
 | `/switch <agent>` | 切换当前 Agent |
 | `/skills` | 技能包列表 |
-| `/graph build` | 构建代码图 |
 | `/hooks list` | Hooks列表 |
 | `/plugin list` | 插件列表 |
 | `/async list` | 异步任务 |
@@ -315,8 +298,6 @@ graph TB
     
     subgraph 知识增强层
         Skills[Skills系统]
-        Graph[代码图谱]
-        RAG[向量检索]
         Wiki[知识Wiki]
     end
     
@@ -330,7 +311,6 @@ graph TB
         ToolRegistry[工具注册表]
         FileTools[文件工具]
         MCPTools[MCP工具]
-        GraphTools[图谱工具]
     end
     
     subgraph LLM层
@@ -348,8 +328,6 @@ graph TB
     AgentRegistry --> MultiAgents
     AgentRegistry --> AsyncMgr
     Executor --> Skills
-    Executor --> Graph
-    Executor --> RAG
     Engine --> Hooks
     CLI --> Commands
     Engine --> Plugins
@@ -358,7 +336,6 @@ graph TB
     Plugins --> Commands
     ToolRegistry --> FileTools
     ToolRegistry --> MCPTools
-    ToolRegistry --> GraphTools
     LLMFactory --> Providers
 ```
 
@@ -436,21 +413,6 @@ execution:
 ```
 
 [详细文档](docs/HOOKS.md)
-
-### 代码图谱
-
-```bash
-# 构建图谱
-/graph build
-
-# 查看统计
-/graph stats
-
-# 自然语言查询
-"找到GraphManager类的定义位置"
-```
-
-[详细文档](docs/GRAPH_GUIDE.md)
 
 ### 自定义命令
 
@@ -598,9 +560,7 @@ triggers: ["最佳实践", "代码规范", "重构"]
 |------|------|
 | [用户使用指南](用户使用指南.md) | 完整用户手册 |
 | [HOOKS](docs/HOOKS.md) | Hooks系统指南 |
-| [代码图谱](docs/GRAPH_GUIDE.md) | 代码图谱指南 |
 | [自定义命令](docs/CUSTOM_COMMANDS.md) | 命令扩展指南 |
-| [RAG配置](docs/RAG配置指南.md) | 检索增强配置 |
 | [插件开发](docs/PLUGIN_DEVELOPMENT.md) | 插件开发手册 |
 | [Loop Engineering](docs/LOOP_ENGINEERING.md) | Loop 循环工程指南 |
 | [技术架构](docs/TECHNICAL_ARCHITECTURE.md) | 系统架构详解 |
@@ -615,11 +575,10 @@ triggers: ["最佳实践", "代码规范", "重构"]
 | [01 · 项目概述与快速开始](wiki/01-项目概述与快速开始.md) | 项目定位、技术栈、上手 |
 | [02 · 系统架构与核心引擎](wiki/02-系统架构与核心引擎.md) | JimiEngine / AgentExecutor / ReactLoop |
 | [03 · Agent 多智能体系统](wiki/03-Agent多智能体系统.md) | Agent、AgentRegistry、异步 Subagent、Team |
-| [04 · 工具系统与 ToolRegistry](wiki/04-工具系统与ToolRegistry.md) | Tool SPI、18 个内置工具、MCP 动态工具 |
+| [04 · 工具系统与 ToolRegistry](wiki/04-工具系统与ToolRegistry.md) | Tool SPI、15 个内置工具、MCP 动态工具 |
 | [05 · LLM 接入层与多模型支持](wiki/05-LLM接入层与多模型支持.md) | ChatProvider、流式、缓存、限流 |
 | [06 · Skills 技能包系统](wiki/06-Skills技能包系统.md) | 技能包规范、触发词、渐进式披露 |
 | [07 · Hooks 自动化系统](wiki/07-Hooks自动化系统.md) | 15 种 Hook 事件、触发器与执行器 |
-| [08 · 代码图谱与 RAG 检索](wiki/08-代码图谱与RAG检索.md) | AST、混合检索、影响分析 |
 | [09 · 自定义命令与 CLI 交互](wiki/09-自定义命令与CLI交互.md) | 元命令、4 种执行类型、JLine Shell |
 | [10 · 记忆管理与会话机制](wiki/10-记忆管理与会话机制.md) | 三层记忆、ReCAP 压缩、审批与 YOLO |
 | [11 · MCP 协议集成](wiki/11-MCP协议集成.md) | MCP 客户端、stdio/http 传输 |

@@ -2,6 +2,8 @@ package io.leavesfly.jimi.tool.core;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
+import io.leavesfly.jimi.harness.HarnessChange;
+import io.leavesfly.jimi.harness.HarnessJournal;
 import io.leavesfly.jimi.memory.MemoryManager;
 import io.leavesfly.jimi.memory.MemorySearcher;
 import io.leavesfly.jimi.memory.MemoryStore;
@@ -30,7 +32,7 @@ import java.util.stream.Collectors;
  *   <li>read - 读取 MEMORY.md 完整内容</li>
  *   <li>write - 覆盖写入指定 section 的内容</li>
  *   <li>append - 向指定 section 追加条目</li>
- *   <li>search - 搜索历史会话记录（Layer 3）</li>
+ *   <li>search - 搜索历史会话记录（Layer 3，含压缩归档）</li>
  *   <li>list_topics - 列出所有 Topic 文件</li>
  *   <li>read_topic - 读取指定 Topic 文件内容</li>
  *   <li>write_topic - 写入 Topic 文件</li>
@@ -47,7 +49,7 @@ public class MemoryTool extends SyncTool<MemoryTool.Params> {
             + "- read: 读取当前项目的完整记忆内容（MEMORY.md）\n"
             + "- write: 覆盖写入指定 section 的内容（如 'User Preferences'、'Key Decisions'）\n"
             + "- append: 向指定 section 追加一条记忆条目\n"
-            + "- search: 搜索历史会话记录（需要 query 参数）\n"
+            + "- search: 搜索历史会话记录（需要 query 参数），同时覆盖上下文压缩产生的归档历史\n"
             + "- list_topics: 列出所有主题文件\n"
             + "- read_topic: 读取指定主题文件的内容\n"
             + "- write_topic: 写入主题文件\n\n"
@@ -56,6 +58,9 @@ public class MemoryTool extends SyncTool<MemoryTool.Params> {
     private MemoryManager memoryManager;
     private String workDirPath;
     private Path sessionsDir;
+
+    /** 审计日志，为 null 时仅跳过审计、不影响写入 */
+    private HarnessJournal harnessJournal;
 
     public MemoryTool() {
         super(NAME, DESCRIPTION, Params.class);
@@ -66,6 +71,13 @@ public class MemoryTool extends SyncTool<MemoryTool.Params> {
      */
     public void setMemoryManager(MemoryManager memoryManager) {
         this.memoryManager = memoryManager;
+    }
+
+    /**
+     * 设置 harness 审计日志，使记忆写入可追溯、可回滚
+     */
+    public void setHarnessJournal(HarnessJournal harnessJournal) {
+        this.harnessJournal = harnessJournal;
     }
 
     public void setWorkDirPath(String workDirPath) {
@@ -121,7 +133,10 @@ public class MemoryTool extends SyncTool<MemoryTool.Params> {
             return ToolResult.error("content is required for write action", "缺少 content");
         }
 
+        String before = memoryManager.readMemory(workDirPath);
         memoryManager.writeMemory(workDirPath, params.getSection(), params.getContent());
+        recordMemoryChange(params.getSection(), before);
+
         return ToolResult.ok(
                 "Successfully updated section '" + params.getSection() + "'",
                 "记忆已更新",
@@ -136,11 +151,34 @@ public class MemoryTool extends SyncTool<MemoryTool.Params> {
             return ToolResult.error("content is required for append action", "缺少 content");
         }
 
+        String before = memoryManager.readMemory(workDirPath);
         memoryManager.appendMemory(workDirPath, params.getSection(), params.getContent());
+        recordMemoryChange(params.getSection(), before);
+
         return ToolResult.ok(
                 "Successfully appended to section '" + params.getSection() + "': " + params.getContent(),
                 "记忆已追加",
                 "追加到 " + params.getSection());
+    }
+
+    /**
+     * 记录记忆变更到 harness 审计日志
+     * <p>
+     * 快照粒度为整份 MEMORY.md（而非单个 section），与
+     * {@code HarnessStore} 的 MEMORY 回滚语义保持一致，保证 revert 可精确还原。
+     * {@code targetId} 仅用于标注是哪个 section 触发的变更。
+     * <p>
+     * Topic 文件的写入不进审计：其存储与 MEMORY.md 无关，若归入 MEMORY 类型
+     * 会导致 revert 错误地覆写 MEMORY.md。
+     */
+    private void recordMemoryChange(String section, String before) {
+        if (harnessJournal == null || workDirPath == null) {
+            return;
+        }
+        String after = memoryManager.readMemory(workDirPath);
+        harnessJournal.record(workDirPath, "manual", HarnessChange.Kind.MEMORY,
+                before == null || before.isEmpty() ? HarnessChange.Op.CREATE : HarnessChange.Op.UPDATE,
+                section, before, after);
     }
 
     private ToolResult handleSearch(Params params) {

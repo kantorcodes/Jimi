@@ -11,11 +11,8 @@ import io.leavesfly.jimi.core.compaction.SimpleCompaction;
 
 import io.leavesfly.jimi.core.sandbox.SandboxValidator;
 import io.leavesfly.jimi.exception.ConfigException;
-import io.leavesfly.jimi.knowledge.graph.GraphManager;
-import io.leavesfly.jimi.knowledge.graph.parser.LanguageParserRegistry;
 import io.leavesfly.jimi.memory.MemoryConsolidator;
 import io.leavesfly.jimi.memory.MemoryManager;
-import io.leavesfly.jimi.knowledge.rag.*;
 import io.leavesfly.jimi.wire.Wire;
 import io.leavesfly.jimi.wire.WireImpl;
 import lombok.extern.slf4j.Slf4j;
@@ -108,13 +105,7 @@ public class JimiConfiguration {
      * 子配置 Bean —— 从 JimiConfig 中提取，供其他 Bean 注入使用
      */
     @Bean
-    public GraphConfig graphConfig(JimiConfig jimiConfig) { return jimiConfig.getGraph(); }
-
-    @Bean
     public MetaToolConfig metaToolConfig(JimiConfig jimiConfig) { return jimiConfig.getMetaTool(); }
-
-    @Bean
-    public VectorIndexConfig vectorIndexConfig(JimiConfig jimiConfig) { return jimiConfig.getVectorIndex(); }
 
     @Bean
     public MemoryConfig memoryConfig(JimiConfig jimiConfig) { return jimiConfig.getMemory(); }
@@ -130,11 +121,6 @@ public class JimiConfiguration {
     }
 
     @Bean
-    public GraphManager graphManager(GraphConfig graphConfig, LanguageParserRegistry parserRegistry) {
-        return new GraphManager(graphConfig, parserRegistry);
-    }
-
-    @Bean
     public SandboxValidator sandboxValidator(JimiConfig jimiConfig) {
         return new SandboxValidator(jimiConfig.getSandbox(), null);
     }
@@ -144,108 +130,14 @@ public class JimiConfiguration {
         return jimiConfig.getLoopEngineering();
     }
 
-    // ==================== 向量索引相关组件 ====================
-
-    /**
-     * 创建嵌入提供者
-     * 根据 JimiConfig 中的 vector_index.enabled 配置条件性创建
-     */
     @Bean
-    public EmbeddingProvider embeddingProvider(JimiConfig jimiConfig, ObjectMapper objectMapper) {
-        VectorIndexConfig config = jimiConfig.getVectorIndex();
-
-        // 如果未启用向量索引，返回 Mock 实现
-        if (!config.isEnabled()) {
-            log.debug("Vector index is disabled, returning mock embedding provider");
-            return new MockEmbeddingProvider(1024, "disabled");
-        }
-
-        String providerType = config.getEmbeddingProvider();
-        String embeddingModel = config.getEmbeddingModel();
-        int dimension = config.getEmbeddingDimension();
-
-        log.info("Creating EmbeddingProvider: type={}, model={}, dimension={}",
-                providerType, embeddingModel, dimension);
-
-        switch (providerType.toLowerCase()) {
-            case "qwen":
-                // 获取qwen提供商配置
-                LLMProviderConfig qwenConfig = jimiConfig.getProviders().get("qwen");
-                if (qwenConfig == null) {
-                    log.error("Qwen provider not configured, falling back to mock");
-                    return new MockEmbeddingProvider(dimension, "qwen-fallback");
-                }
-                return new QwenEmbeddingProvider(embeddingModel, dimension, qwenConfig, objectMapper);
-
-            case "mock":
-            case "local":
-                return new MockEmbeddingProvider(dimension, providerType);
-
-            default:
-                log.warn("Unknown embedding provider: {}, falling back to mock", providerType);
-                return new MockEmbeddingProvider(dimension, "mock");
-        }
+    public RefineConfig refineConfig(JimiConfig jimiConfig) {
+        return jimiConfig.getRefine();
     }
 
-    /**
-     * 创建向量存储
-     * 根据 JimiConfig 中的 vector_index.enabled 配置条件性创建
-     */
     @Bean
-    public VectorStore vectorStore(JimiConfig jimiConfig, EmbeddingProvider embeddingProvider, ObjectMapper objectMapper) {
-        VectorIndexConfig config = jimiConfig.getVectorIndex();
-
-        // 如果未启用向量索引，返回空实现
-        if (!config.isEnabled()) {
-            log.debug("Vector index is disabled, returning empty vector store");
-            return new InMemoryVectorStore(objectMapper);
-        }
-
-        String storageType = config.getStorageType();
-        String indexPath = config.getIndexPath();
-
-        log.info("Creating VectorStore: type={}, path={}", storageType, indexPath);
-
-        VectorStore store;
-
-        // 目前只支持内存存储，后续可扩展
-        switch (storageType.toLowerCase()) {
-            case "memory":
-            case "file":
-                InMemoryVectorStore inMemoryStore = new InMemoryVectorStore(objectMapper);
-                // 设置配置的索引路径（相对路径）
-                inMemoryStore.setConfiguredIndexPath(indexPath);
-                store = inMemoryStore;
-                break;
-            default:
-                log.warn("Unknown storage type: {}, falling back to in-memory", storageType);
-                InMemoryVectorStore fallbackStore = new InMemoryVectorStore(objectMapper);
-                fallbackStore.setConfiguredIndexPath(indexPath);
-                store = fallbackStore;
-        }
-
-        // 注意: 自动加载需要在工作目录设置后进行
-        // 将在 CodeToolProvider 或 IndexCommandHandler 中设置 workDir 后触发
-        log.debug("VectorStore created, auto-load will be triggered after workDir is set");
-
-        return store;
-    }
-
-    /**
-     * 创建分块器
-     * 根据 JimiConfig 中的 vector_index.enabled 配置条件性创建
-     */
-    @Bean
-    public Chunker chunker(JimiConfig jimiConfig) {
-        VectorIndexConfig config = jimiConfig.getVectorIndex();
-
-        if (!config.isEnabled()) {
-            log.debug("Vector index is disabled, chunker will not be used");
-        } else {
-            log.info("Creating Chunker: SimpleChunker");
-        }
-
-        return new SimpleChunker();
+    public SubagentConfig subagentConfig(JimiConfig jimiConfig) {
+        return jimiConfig.getSubagent();
     }
 
 

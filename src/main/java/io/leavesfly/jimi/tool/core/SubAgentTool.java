@@ -37,6 +37,7 @@ import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -44,6 +45,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * SubAgentTool 工具 - 子 Agent 任务委托
@@ -60,6 +62,12 @@ import java.util.Map;
  * - 搜索特定技术信息（只返回相关结果）
  * - 分析大型代码库（多个子 Agent 并行探索）
  * - 独立模块的开发/重构/测试
+ *
+ * 执行模式：
+ * - {@code sync}（默认）：阻塞等待子 Agent 完成并直接返回结果
+ * - {@code async}：立即返回句柄，执行在后台继续，用 {@code SubagentResult} 工具查询
+ * <p>
+ * 子 Agent 的轨迹会持久保留，因此可用 {@code resume_handle} 对已结束的子 Agent 续问。
  *
  * @author 山泽
  */
@@ -101,6 +109,11 @@ public class SubAgentTool extends AbstractTool<SubAgentTool.Params> {
     // AgentExecutor 依赖组件
     private final ContextManager contextManager;
 
+    /**
+     * 异步运行态注册表（单例，与 {@code SubagentResult} 工具共享）
+     */
+    private final SubagentRunRegistry runRegistry;
+
     private final Map<String, Agent> subagents;
     private final Map<String, AgentSpec> subagentAgentSpecs;
     private Map<String, SubagentSpec> subagentSpecs;
@@ -139,11 +152,27 @@ public class SubAgentTool extends AbstractTool<SubAgentTool.Params> {
         @JsonProperty("prompt")
         @JsonPropertyDescription("发送给子 Agent 的完整任务提示词，必须包含足够的上下文信息以便子 Agent 能够独立完成任务")
         private String prompt;
+
+        /**
+         * 执行模式
+         */
+        @JsonProperty("mode")
+        @JsonPropertyDescription("执行模式：sync（默认，等待子 Agent 完成并返回结果）或 async（立即返回句柄，"
+                + "后续用 SubagentResult 工具查询）。需要并行推进多个独立子任务时用 async")
+        private String mode;
+
+        /**
+         * 续问句柄
+         */
+        @JsonProperty("resume_handle")
+        @JsonPropertyDescription("对已执行过的子 Agent 续问：传入其之前返回的 sessionId 句柄，"
+                + "子 Agent 会在原有上下文上继续，而不是从零开始。省略则新建上下文")
+        private String resumeHandle;
     }
 
     @Autowired
     public SubAgentTool(ObjectMapper objectMapper, AgentRegistry agentRegistry, ToolRegistryFactory toolRegistryFactory,
-                        ContextManager contextManager) {
+                        ContextManager contextManager, SubagentRunRegistry runRegistry) {
         super("SubAgentTool", "SubAgentTool tool (description will be set when initialized)", Params.class);
 
         this.objectMapper = objectMapper;
@@ -151,6 +180,7 @@ public class SubAgentTool extends AbstractTool<SubAgentTool.Params> {
         this.toolRegistryFactory = toolRegistryFactory;
 
         this.contextManager = contextManager;
+        this.runRegistry = runRegistry;
         this.subagents = new HashMap<>();
         this.subagentAgentSpecs = new HashMap<>();
     }
@@ -210,6 +240,15 @@ public class SubAgentTool extends AbstractTool<SubAgentTool.Params> {
         for (Map.Entry<String, SubagentSpec> entry : agentSpec.getSubagents().entrySet()) {
             sb.append("- `").append(entry.getKey()).append("`: ").append(entry.getValue().getDescription()).append("\n");
         }
+
+        sb.append("\n**执行模式**\n\n");
+        sb.append("- `mode=sync`（默认）：等待子代理完成，直接拿到结果。\n");
+        sb.append("- `mode=async`：立即返回句柄，子代理在后台运行。适用于同时派发多个相互独立的子任务：\n");
+        sb.append("  先全部启动，再用 `SubagentResult` 工具按句柄汇收结果。\n\n");
+
+        sb.append("**续问**\n\n");
+        sb.append("传入 `resume_handle=<之前返回的 sessionId>` 可让子代理在原有上下文上继续，");
+        sb.append("无需在新 prompt 里重复转述已经讨论过的背景。\n");
 
         return sb.toString();
     }
@@ -282,7 +321,7 @@ public class SubAgentTool extends AbstractTool<SubAgentTool.Params> {
             Agent subagent = subagents.get(subagentName);
             AgentSpec subAgentSpec = subagentAgentSpecs.get(subagentName);
 
-            return runSubagent(subagent, subAgentSpec, params.getPrompt()).onErrorResume(e -> {
+            return runSubagent(subagent, subAgentSpec, params).onErrorResume(e -> {
                 log.error("Failed to run subagent", e);
                 return Mono.just(ToolResult.error("Failed to run subagent: " + e.getMessage(), "Failed to run subagent"));
             });
@@ -291,24 +330,47 @@ public class SubAgentTool extends AbstractTool<SubAgentTool.Params> {
 
     /**
      * 运行子 Agent
+     * <p>
+     * 四个变量组合出四种行为：新建/续问 × 同步/异步。句柄在四种情形下含义一致 ——
+     * 都是子 Agent 的 sessionId，也就是其轨迹文件名。
      *
      * @param agent        子 Agent 实例
      * @param subAgentSpec 子 Agent 对应的 AgentSpec（用于创建正确的工具注册表）
-     * @param prompt       任务提示词
+     * @param params       工具参数
      */
-    private Mono<ToolResult> runSubagent(Agent agent, AgentSpec subAgentSpec, String prompt) {
+    private Mono<ToolResult> runSubagent(Agent agent, AgentSpec subAgentSpec, Params params) {
         return Mono.defer(() -> {
             try {
-                // 1. 发送 Subagent 启动事件
+                String prompt = params.getPrompt();
+                String resumeHandle = params.getResumeHandle();
+                boolean resumed = resumeHandle != null && !resumeHandle.isBlank();
+
+                // 1. 定位子 Agent 历史文件：续问复用原文件，否则新建（保证上下文隔离）
+                Path subHistoryFile;
+                if (resumed) {
+                    subHistoryFile = resolveHistoryFile(resumeHandle);
+                    if (subHistoryFile == null) {
+                        return Mono.just(ToolResult.error(
+                                "Invalid resume_handle: " + resumeHandle, "非法的续问句柄"));
+                    }
+                    if (!Files.exists(subHistoryFile)) {
+                        return Mono.just(ToolResult.error(
+                                "Subagent trajectory not found for handle: " + resumeHandle,
+                                "续问句柄对应的轨迹不存在"));
+                    }
+                } else {
+                    subHistoryFile = createSubagentHistoryFile(agent.getName());
+                }
+                String handle = toSessionId(subHistoryFile);
+
+                // 2. 发送 Subagent 启动事件
                 if (wire != null) {
                     wire.send(new SubagentStarting(agent.getName(), prompt));
                 }
 
-                // 2. 创建临时历史文件（子 Agent 每次全新上下文，保证上下文隔离）
-                Path subHistoryFile = createTempHistoryFile(agent.getName());
-
-                // 3. 子上下文（全新，不加载任何历史）
+                // 3. 子上下文：续问时需先 restore，新建时不加载任何历史
                 Context subContext = new Context(subHistoryFile, objectMapper);
+                Mono<Void> prepare = resumed ? subContext.restore().then() : Mono.empty();
 
                 // 4. 子工具注册表（使用子 Agent 自己的 AgentSpec）
                 ToolRegistry subToolRegistry = createSubToolRegistry(subAgentSpec);
@@ -316,21 +378,105 @@ public class SubAgentTool extends AbstractTool<SubAgentTool.Params> {
                 // 5. 子 JimiEngine
                 JimiEngine subEngine = createSubEngine(agent, subContext, subToolRegistry);
 
-                // 6. 运行并后处理
-                return subEngine.run(prompt)
+                // 6. 执行体（尚未订阅）
+                Mono<ToolResult> execution = prepare
+                        .then(subEngine.run(prompt))
                         .then(Mono.defer(() -> extractFinalResponse(subContext, subEngine, prompt)))
+                        .map(result -> appendTrajectoryHandle(result, handle))
                         .doOnSuccess(result -> {
                             if (wire != null) {
                                 wire.send(new SubagentCompleted(result.getOutput()));
                             }
-                        })
-                        .doFinally(signalType -> cleanupTempHistoryFile(subHistoryFile));
+                        });
+
+                // 7. 异步模式：立即返回句柄，执行体转入后台
+                if (isAsyncMode(params)) {
+                    return startAsync(agent.getName(), params, handle, execution);
+                }
+
+                return execution;
 
             } catch (Exception e) {
                 log.error("Error running subagent", e);
                 return Mono.just(ToolResult.error(e.getMessage(), "Failed to run subagent"));
             }
         });
+    }
+
+    /**
+     * 是否请求异步执行
+     */
+    private boolean isAsyncMode(Params params) {
+        return "async".equalsIgnoreCase(params.getMode() != null ? params.getMode().trim() : null);
+    }
+
+    /**
+     * 启动后台执行并立即返回句柄
+     * <p>
+     * 并发额度耗尽时<b>降级为同步</b>而非报错：任务仍会完成，只是失去并行收益。
+     * 直接报错会把一个资源调度问题变成模型需要处理的错误，得不偿失。
+     *
+     * @param subagentName 子 Agent 名称
+     * @param params       工具参数
+     * @param handle        句柄
+     * @param execution    尚未订阅的执行体
+     */
+    private Mono<ToolResult> startAsync(String subagentName, Params params, String handle,
+                                        Mono<ToolResult> execution) {
+        if (!runRegistry.tryAcquire()) {
+            log.info("Async subagent limit reached (max_concurrent), degrading to sync execution");
+            return execution;
+        }
+
+        runRegistry.start(handle, subagentName, params.getDescription());
+        execution
+                .subscribeOn(Schedulers.boundedElastic())
+                .doFinally(signalType -> runRegistry.release())
+                .subscribe(
+                        result -> {
+                            if (result.isOk()) {
+                                runRegistry.complete(handle, result.getOutput());
+                            } else {
+                                runRegistry.fail(handle, result.getOutput() != null
+                                        ? result.getOutput() : result.getMessage());
+                            }
+                            log.info("Async subagent finished: handle={}, ok={}", handle, result.isOk());
+                        },
+                        error -> {
+                            runRegistry.fail(handle, error.getMessage());
+                            log.error("Async subagent failed: handle={}", handle, error);
+                        });
+
+        String output = String.format(
+                "子 Agent 已异步启动。handle=%s、subagent=%s%n"
+                        + "继续推进其他工作，需要结果时用 SubagentResult(action=status或result, handle=%s) 查询。",
+                handle, subagentName, handle);
+        return Mono.just(ToolResult.ok(output, "子 Agent 已异步启动", "异步启动 " + subagentName));
+    }
+
+    /**
+     * 向结果追加子 Agent 轨迹句柄
+     * <p>
+     * 子 Agent 的完整推理轨迹已持久化保留，父 Agent 拿到的不再只是一段摘要文本，
+     * 而是一个可寻址的坐标：需要中间推理时可用 {@code Memory(action=search)} 检索。
+     *
+     * @param result            子 Agent 执行结果
+     * @param subagentSessionId 子 Agent 会话标识，即句柄
+     * @return 追加句柄说明后的结果（原对象）
+     */
+    private ToolResult appendTrajectoryHandle(ToolResult result, String subagentSessionId) {
+        if (result == null || subagentSessionId == null) {
+            return result;
+        }
+
+        String handleNote = String.format(
+                "[子 Agent 完整轨迹已保留：sessionId=%s。需要其中间推理时使用 Memory(action=search) 检索；"
+                        + "需要在此基础上继续追问时使用 SubAgentTool(resume_handle=%s)。]",
+                subagentSessionId, subagentSessionId);
+
+        String output = result.getOutput() != null ? result.getOutput() : "";
+        result.setOutput(output.isEmpty() ? handleNote : output + "\n\n" + handleNote);
+        return result;
     }
 
     /**
@@ -463,14 +609,17 @@ public class SubAgentTool extends AbstractTool<SubAgentTool.Params> {
     }
 
     /**
-     * 创建临时历史文件，用于子 Agent 的上下文持久化
-     * 每次调用都创建新的临时文件，确保子 Agent 拥有全新的上下文（上下文隔离）
+     * 创建子 Agent 的历史文件
+     * <p>
+     * 与主会话同目录，使 {@code MemorySearcher} 的搜索天然覆盖，无需额外索引。
+     * 文件不再于执行结束后删除 —— 子 Agent 的完整推理轨迹本来是存在的，
+     * 主动销毁等于丢弃可寻址的上下文；父 Agent 只能拿到一段摘要文本。
      *
-     * @param subagentName 子 Agent 名称（用于文件名前缀，便于调试）
-     * @return 临时历史文件路径
-     * @throws IOException 如果无法创建文件
+     * @param subagentName 子 Agent 名称
+     * @return 历史文件路径
+     * @throws IOException 如果无法创建目录
      */
-    private Path createTempHistoryFile(String subagentName) throws IOException {
+    private Path createSubagentHistoryFile(String subagentName) throws IOException {
         Path mainHistoryFile = session.getHistoryFile();
         Path parent = mainHistoryFile.getParent();
 
@@ -478,20 +627,41 @@ public class SubAgentTool extends AbstractTool<SubAgentTool.Params> {
             Files.createDirectories(parent);
         }
 
-        return Files.createTempFile(parent, "sub_" + subagentName + "_", ".jsonl");
+        String fileName = String.format("subagent-%s-%s-%s.jsonl",
+                session.getId(), subagentName,
+                UUID.randomUUID().toString().substring(0, 8));
+
+        return parent != null ? parent.resolve(fileName) : Path.of(fileName);
     }
 
     /**
-     * 清理子 Agent 的临时历史文件
+     * 从历史文件路径推导会话标识（即子 Agent 句柄）
      */
-    private void cleanupTempHistoryFile(Path tempFile) {
-        try {
-            if (tempFile != null && Files.exists(tempFile)) {
-                Files.deleteIfExists(tempFile);
-                log.debug("Cleaned up subagent temp history file: {}", tempFile);
-            }
-        } catch (IOException e) {
-            log.warn("Failed to cleanup subagent temp history file: {}", tempFile, e);
+    private String toSessionId(Path historyFile) {
+        String fileName = historyFile.getFileName().toString();
+        return fileName.endsWith(".jsonl")
+                ? fileName.substring(0, fileName.length() - ".jsonl".length())
+                : fileName;
+    }
+
+    /**
+     * 从句柄反解出历史文件路径（续问用）
+     * <p>
+     * 句柄来自模型输入，因此拒绝包含路径分隔符或 {@code ..} 的值 ——
+     * 句柄只应是一个文件名，不得用于穿越到会话目录之外。
+     *
+     * @param handle 子 Agent 句柄
+     * @return 历史文件路径，句柄非法时返回 {@code null}
+     */
+    private Path resolveHistoryFile(String handle) {
+        String trimmed = handle.trim();
+        if (trimmed.contains("/") || trimmed.contains("\\") || trimmed.contains("..")) {
+            log.warn("Rejected resume_handle containing path separators: {}", handle);
+            return null;
         }
+
+        String fileName = trimmed.endsWith(".jsonl") ? trimmed : trimmed + ".jsonl";
+        Path parent = session.getHistoryFile().getParent();
+        return parent != null ? parent.resolve(fileName) : Path.of(fileName);
     }
 }

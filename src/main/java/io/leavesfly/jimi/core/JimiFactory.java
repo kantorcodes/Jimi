@@ -13,6 +13,7 @@ import io.leavesfly.jimi.command.custom.CustomCommandRegistry;
 import io.leavesfly.jimi.core.hook.HookContext;
 import io.leavesfly.jimi.core.hook.HookRegistry;
 import io.leavesfly.jimi.core.hook.HookType;
+import io.leavesfly.jimi.harness.RefineEngine;
 import io.leavesfly.jimi.llm.LLM;
 import io.leavesfly.jimi.llm.LLMFactory;
 import io.leavesfly.jimi.core.session.Session;
@@ -79,6 +80,9 @@ public class JimiFactory {
 
     @Autowired(required = false)
     private PluginRegistry pluginRegistry;  // 插件注册中心（项目级插件加载）
+
+    @Autowired(required = false)
+    private RefineEngine refineEngine;  // 自我改进元循环（默认关闭）
 
 
     // ==================== Builder 模式 API ====================
@@ -266,6 +270,7 @@ public class JimiFactory {
                         .contextManager(contextManager)
                         .memoryManager(memoryManager)
                         .hookRegistry(hookRegistry)
+                        .refineEngine(refineEngine)
                         .build();
                 JimiEngine soul = JimiEngine.create(executor);
 

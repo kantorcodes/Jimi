@@ -132,57 +132,6 @@ web_search:
   api_key: YOUR_API_KEY_HERE
   custom_headers: { }
 
-# ==================== 向量索引配置 ====================
-
-vector_index:
-  enabled: false                          # 是否启用向量索引功能
-  index_path: .jimi/vector_index          # 索引存储路径
-  embedding_provider: qwen                # 使用的嵌入提供商
-  embedding_model: text-embedding-v3      # 嵌入模型名称
-  embedding_dimension: 1024               # 嵌入向量维度
-  chunk_size: 50                          # 文本分块大小（行数）
-  chunk_overlap: 5                        # 分块重叠行数
-  top_k: 5                                # 检索返回的最大结果数
-  file_extensions: .java,.kt,.py,.js,.ts,.go,.rs  # 支持的文件扩展名
-
-# ==================== 代码图配置 ====================
-
-graph:
-  enabled: true                   # 是否启用代码图功能
-  auto_build: false               # 文件变化时是否自动构建
-  build_on_startup: false         # 启动时是否构建代码图
-  storage_path: .jimi/code_graph  # 图存储路径
-  auto_load: true                 # 启动时是否自动加载已保存的图
-  auto_save: true                 # 构建后是否自动保存
-
-  # 包含的文件模式（支持 glob 语法）
-  include_patterns:
-    - "**/*.java"
-
-  # 排除的文件模式
-  exclude_patterns:
-    - "**/test/**"
-    - "**/tests/**"
-    - "**/target/**"
-    - "**/build/**"
-    - "**/node_modules/**"
-    - "**/.git/**"
-
-  # 缓存配置
-  cache:
-    enabled: true      # 是否启用缓存
-    ttl: 3600          # 缓存过期时间（秒）
-    max_size: 10000    # 最大缓存条目数
-
-  # 搜索配置
-  search:
-    max_results: 50           # 最大搜索结果数
-    enable_hybrid: true       # 是否启用混合搜索（图+向量）
-    graph_weight: 0.6         # 图搜索权重（0-1）
-    vector_weight: 0.4        # 向量搜索权重（0-1）
-    min_similarity: 0.3       # 最小相似度阈值（0-1）
-
-
 # ==================== 记忆模块配置 ====================
 
 memory:
@@ -202,7 +151,33 @@ meta_tool:
   max_code_length: 10000       # 最大代码长度（字符）
   log_execution_details: true  # 是否记录执行详情
 
+# ==================== 工具输出配置 ====================
 
+# 工具大输出落盘：超过阈值的成功输出写入 .jimi/tool-output/，
+# 上下文仅保留摘要 + 预览 + 文件路径，避免大输出加速触发有损压缩。
+tool_output:
+  max_inline_chars: 32000      # 内联到上下文的最大字符数，0 表示禁用落盘
+  preview_chars: 2000          # 落盘后仍保留在上下文中的预览字符数
+
+# ==================== 自我改进配置 ====================
+
+# refine 会读取执行轨迹，对 harness 补充层（prompt notes / 记忆 / 技能）做最小增量修改。
+# 这是有实证风险的能力：自我修改若缺少审计与回滚会退化为不可控漂移，故默认关闭。
+# 开启前请确认 /harness log 与 /harness revert 可用。
+refine:
+  enabled: false                   # 是否启用自我改进
+  trigger_on_verify_failures: 2    # 目标验证连续失败达到该次数时触发，0 表示禁用该触发点
+  trigger_on_success: false        # 任务成功后是否触发（沉淀可复用战术）
+  trajectory_window: 40            # 分析时读取的最近历史消息条数
+  model: ""                        # 使用的模型，为空则回退默认模型
+
+# ==================== 子 Agent 编排配置 ====================
+
+# 异步子 Agent（SubAgentTool mode=async）的并发闸门。
+# 与 ToolDispatcher 的单批并发度解耦：异步子 Agent 在工具返回后仍在后台运行。
+subagent:
+  max_concurrent: 4      # 同时后台运行的子 Agent 上限，额度耗尽时自动降级为同步
+  max_retained_runs: 64  # 内存中保留的运行记录上限（进程重启即丢）
 
 # ==================== 沙箱配置 ====================
 

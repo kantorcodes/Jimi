@@ -12,6 +12,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -27,6 +28,7 @@ import java.util.stream.Stream;
  *   <li>与 SessionManager 松耦合，仅通过文件路径交互</li>
  *   <li>支持关键词搜索和正则表达式搜索</li>
  *   <li>返回匹配的上下文片段（包含前后文）</li>
+ *   <li>同时覆盖上下文压缩产生的归档文件（{@code *.jsonl.N}）</li>
  * </ul>
  */
 @Slf4j
@@ -35,6 +37,34 @@ public class MemorySearcher {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final int DEFAULT_MAX_RESULTS = 20;
     private static final int CONTEXT_SNIPPET_MAX_LENGTH = 300;
+
+    /**
+     * 会话文件名模式：活动文件 {@code xxx.jsonl}，或压缩归档文件 {@code xxx.jsonl.N}。
+     * <p>
+     * 上下文压缩时 {@code JSONLContextRepository.revertToCheckpoint} 会把原文件
+     * 轮转为 {@code xxx.jsonl.N}，压缩前的完整历史保留其中，因此搜索必须一并覆盖。
+     */
+    private static final Pattern SESSION_FILE_PATTERN = Pattern.compile(".*\\.jsonl(\\.\\d+)?$");
+
+    /** 归档文件名模式，捕获组 1 为会话名，捕获组 2 为轮转序号 */
+    private static final Pattern ARCHIVE_FILE_PATTERN = Pattern.compile("^(.*)\\.jsonl\\.(\\d+)$");
+
+    /** 轮转序号告警阈值（上限为 999，见 JSONLContextRepository.getNextRotationPath） */
+    private static final int ROTATION_WARN_THRESHOLD = 900;
+
+    /**
+     * 判断是否为会话文件（含压缩归档文件）
+     */
+    private static boolean isSessionFile(Path path) {
+        return SESSION_FILE_PATTERN.matcher(path.getFileName().toString()).matches();
+    }
+
+    /**
+     * 判断是否为压缩归档文件
+     */
+    private static boolean isArchivedFile(Path path) {
+        return ARCHIVE_FILE_PATTERN.matcher(path.getFileName().toString()).matches();
+    }
 
     /**
      * 搜索指定工作目录下所有会话的历史记录
@@ -55,9 +85,9 @@ public class MemorySearcher {
 
         try (Stream<Path> files = Files.list(sessionsDir)) {
             List<Path> jsonlFiles = files
-                    .filter(p -> p.toString().endsWith(".jsonl"))
+                    .filter(MemorySearcher::isSessionFile)
                     .sorted((a, b) -> {
-                        // 按文件修改时间降序（最近的会话优先）
+                        // 按文件修改时间降序（最近的会话优先，归档文件天然靠后）
                         try {
                             return Files.getLastModifiedTime(b).compareTo(Files.getLastModifiedTime(a));
                         } catch (IOException e) {
@@ -127,7 +157,7 @@ public class MemorySearcher {
                 continue;
             }
             try (Stream<Path> files = Files.list(sessionsDir)) {
-                files.filter(p -> p.toString().endsWith(".jsonl")).forEach(allJsonlFiles::add);
+                files.filter(MemorySearcher::isSessionFile).forEach(allJsonlFiles::add);
             } catch (IOException e) {
                 log.warn("Failed to list session files in: {}", sessionsDir, e);
             }
@@ -177,7 +207,7 @@ public class MemorySearcher {
 
         try (Stream<Path> files = Files.list(sessionsDir)) {
             List<Path> jsonlFiles = files
-                    .filter(p -> p.toString().endsWith(".jsonl"))
+                    .filter(MemorySearcher::isSessionFile)
                     .sorted((a, b) -> {
                         try {
                             return Files.getLastModifiedTime(b).compareTo(Files.getLastModifiedTime(a));
@@ -205,6 +235,7 @@ public class MemorySearcher {
      */
     private void searchInFile(Path jsonlFile, String queryLower, int remaining, List<SearchResult> results) {
         String sessionId = extractSessionId(jsonlFile);
+        boolean archived = isArchivedFile(jsonlFile);
         int initialSize = results.size();
 
         try (BufferedReader reader = Files.newBufferedReader(jsonlFile)) {
@@ -220,7 +251,7 @@ public class MemorySearcher {
                 if (textContent != null && textContent.toLowerCase().contains(queryLower)) {
                     String role = extractRole(line);
                     String snippet = createSnippet(textContent, queryLower);
-                    results.add(new SearchResult(sessionId, lineNumber, role, snippet));
+                    results.add(new SearchResult(sessionId, lineNumber, role, snippet, archived));
                 }
             }
         } catch (IOException e) {
@@ -233,6 +264,7 @@ public class MemorySearcher {
      */
     private void searchInFileRegex(Path jsonlFile, Pattern pattern, int remaining, List<SearchResult> results) {
         String sessionId = extractSessionId(jsonlFile);
+        boolean archived = isArchivedFile(jsonlFile);
         int initialSize = results.size();
 
         try (BufferedReader reader = Files.newBufferedReader(jsonlFile)) {
@@ -248,7 +280,7 @@ public class MemorySearcher {
                 if (textContent != null && pattern.matcher(textContent).find()) {
                     String role = extractRole(line);
                     String snippet = createSnippet(textContent, pattern.pattern());
-                    results.add(new SearchResult(sessionId, lineNumber, role, snippet));
+                    results.add(new SearchResult(sessionId, lineNumber, role, snippet, archived));
                 }
             }
         } catch (IOException e) {
@@ -338,9 +370,23 @@ public class MemorySearcher {
 
     /**
      * 从文件路径中提取 session ID
+     * <p>
+     * 归档文件（{@code xxx.jsonl.N}）返回 {@code xxx#archiveN}，
+     * 使搜索结果能区分活动会话与压缩归档。
      */
     private String extractSessionId(Path jsonlFile) {
         String fileName = jsonlFile.getFileName().toString();
+
+        Matcher archiveMatcher = ARCHIVE_FILE_PATTERN.matcher(fileName);
+        if (archiveMatcher.matches()) {
+            String baseName = archiveMatcher.group(1);
+            int rotation = Integer.parseInt(archiveMatcher.group(2));
+            if (rotation > ROTATION_WARN_THRESHOLD) {
+                log.warn("会话归档文件序号已达 {}，接近轮转上限 999，建议清理：{}", rotation, fileName);
+            }
+            return baseName + "#archive" + rotation;
+        }
+
         if (fileName.endsWith(".jsonl")) {
             return fileName.substring(0, fileName.length() - ".jsonl".length());
         }
@@ -349,12 +395,16 @@ public class MemorySearcher {
 
     /**
      * 搜索结果
+     *
+     * @param sessionId 会话标识，归档来源带 {@code #archiveN} 后缀
+     * @param archived  是否来自压缩归档文件
      */
     public record SearchResult(
             String sessionId,
             int lineNumber,
             String role,
-            String snippet
+            String snippet,
+            boolean archived
     ) {
         /**
          * 格式化为可读字符串
@@ -366,9 +416,21 @@ public class MemorySearcher {
                 case "system" -> "[System]";
                 default -> "[" + role + "]";
             };
-            return String.format("Session: %s (line %d) %s\n  %s",
-                    sessionId.substring(0, Math.min(8, sessionId.length())),
-                    lineNumber, roleLabel, snippet);
+            return String.format("Session: %s (line %d) %s%s\n  %s",
+                    shortSessionId(), lineNumber, roleLabel,
+                    archived ? " [已归档]" : "", snippet);
+        }
+
+        /**
+         * 缩短会话标识，但保留归档标记以便定位来源
+         */
+        private String shortSessionId() {
+            int markerIndex = sessionId.indexOf("#archive");
+            if (markerIndex < 0) {
+                return sessionId.substring(0, Math.min(8, sessionId.length()));
+            }
+            String baseName = sessionId.substring(0, markerIndex);
+            return baseName.substring(0, Math.min(8, baseName.length())) + sessionId.substring(markerIndex);
         }
     }
 }

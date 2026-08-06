@@ -2,6 +2,7 @@ package io.leavesfly.jimi.core.engine.toolcall;
 
 
 import io.leavesfly.jimi.core.engine.context.Context;
+import io.leavesfly.jimi.config.info.ToolOutputConfig;
 import io.leavesfly.jimi.core.hook.HookContext;
 import io.leavesfly.jimi.core.hook.HookRegistry;
 import io.leavesfly.jimi.core.hook.HookType;
@@ -20,6 +21,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +43,9 @@ import java.util.Optional;
  * - 非并发安全的工具（如文件写入、BashTool）串行执行
  * - 工具调用按原始顺序分组：连续的并发安全工具合并为一个并行批次，
  *   遇到非并发安全工具则单独串行执行
+ * <p>
+ * 大输出策略：
+ * - 超过阈值的成功输出会落盘到 {@code .jimi/tool-output/}，上下文仅保留摘要与文件路径
  */
 @Slf4j
 public class ToolDispatcher {
@@ -48,14 +55,24 @@ public class ToolDispatcher {
     private final ToolErrorTracker toolErrorTracker;
     private final Path workDir;
     private final HookRegistry hookRegistry;
+    private final ToolOutputConfig toolOutputConfig;
+    private final String sessionId;
 
     public ToolDispatcher(ToolRegistry toolRegistry, Path workDir, Wire wire,
                           ToolErrorTracker toolErrorTracker, HookRegistry hookRegistry) {
+        this(toolRegistry, workDir, wire, toolErrorTracker, hookRegistry, new ToolOutputConfig(), "default");
+    }
+
+    public ToolDispatcher(ToolRegistry toolRegistry, Path workDir, Wire wire,
+                          ToolErrorTracker toolErrorTracker, HookRegistry hookRegistry,
+                          ToolOutputConfig toolOutputConfig, String sessionId) {
         this.toolRegistry = toolRegistry;
         this.workDir = workDir;
         this.wire = wire;
         this.toolErrorTracker = toolErrorTracker;
         this.hookRegistry = hookRegistry;
+        this.toolOutputConfig = toolOutputConfig != null ? toolOutputConfig : new ToolOutputConfig();
+        this.sessionId = sessionId != null ? sessionId : "default";
     }
 
 
@@ -327,7 +344,7 @@ public class ToolDispatcher {
 
         if (result.isOk()) {
             toolErrorTracker.clearErrors();
-            content = formatToolResult(result);
+            content = offloadIfTooLarge(formatToolResult(result), result, toolCallId);
 
         } else if (result.isError()) {
             toolErrorTracker.trackError(toolSignature);
@@ -337,6 +354,55 @@ public class ToolDispatcher {
         }
 
         return Message.tool(toolCallId, content);
+    }
+
+    /**
+     * 输出过大时落盘，上下文仅保留摘要、预览与文件路径
+     * <p>
+     * 仅对成功结果生效：错误信息通常短且关键，截断反而丢掉排查依据。
+     * 落盘失败时降级为原有行为（直接内联），不阻断工具链。
+     *
+     * @param content    已格式化的完整输出
+     * @param result     工具结果（用于取 brief/message 作为摘要）
+     * @param toolCallId 工具调用 ID，用作文件名
+     * @return 内联内容或截断后的引用内容
+     */
+    private String offloadIfTooLarge(String content, ToolResult result, String toolCallId) {
+        int maxInlineChars = toolOutputConfig.getMaxInlineChars();
+        if (maxInlineChars <= 0 || content == null || content.length() <= maxInlineChars) {
+            return content;
+        }
+
+        Path outputFile = workDir.resolve(".jimi").resolve("tool-output")
+                .resolve(sessionId).resolve(toolCallId + ".txt");
+        try {
+            Files.createDirectories(outputFile.getParent());
+            Files.writeString(outputFile, content, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            log.warn("Failed to offload large tool output to {}, keeping it inline", outputFile, e);
+            return content;
+        }
+
+        String summary = result.getBrief() != null && !result.getBrief().isEmpty()
+                ? result.getBrief()
+                : result.getMessage();
+        int previewChars = Math.min(Math.max(toolOutputConfig.getPreviewChars(), 0), content.length());
+        long lineCount = content.lines().count();
+        Path relativePath = workDir.relativize(outputFile);
+
+        StringBuilder sb = new StringBuilder();
+        if (summary != null && !summary.isEmpty()) {
+            sb.append(summary).append("\n\n");
+        }
+        if (previewChars > 0) {
+            sb.append(content, 0, previewChars).append("\n\n");
+        }
+        sb.append(String.format(
+                "[输出过大已截断。完整输出 %d 字符 / %d 行，已保存至 %s。使用 ReadFile 或 Grep 按需读取。]",
+                content.length(), lineCount, relativePath));
+
+        log.info("Offloaded large tool output ({} chars) to {}", content.length(), relativePath);
+        return sb.toString();
     }
 
     /**

@@ -28,14 +28,12 @@ graph TB
 
     subgraph Tools["工具系统"]
         ToolRegistry["ToolRegistry / Provider SPI"]
-        BuiltinTools["文件 / Bash / Web / 图谱 / 任务"]
+        BuiltinTools["文件 / Bash / Web / 任务"]
         MCPTools["MCP 工具"]
     end
 
     subgraph Knowledge["知识增强层"]
         Skills["Skills"]
-        Graph["Code Graph"]
-        RAG["向量检索"]
         Memory["长期记忆 / ReCAP"]
     end
 
@@ -62,8 +60,6 @@ graph TB
     ToolRegistry --> MCPTools
 
     Executor --> Skills
-    Executor --> Graph
-    Executor --> RAG
     Executor --> Memory
 
     Executor --> LLMFactory
@@ -97,11 +93,8 @@ graph LR
     end
 
     subgraph Knowledge["knowledge"]
-        GraphMod["knowledge.graph"]
-        RagMod["knowledge.rag"]
-        MemoryMod["knowledge.memory"]
-        WikiMod["knowledge.wiki"]
-        Unified["KnowledgeService"]
+        MemoryMod["memory"]
+        WikiMod["command.wiki"]
     end
 
     subgraph LLM["llm"]

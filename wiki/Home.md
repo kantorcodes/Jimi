@@ -30,7 +30,7 @@
   `Agent` / `AgentSpec` / `AgentRegistry`、内置 6 大专业 Agent、YAML 自定义 Agent、异步 Subagent、Agent Team。
 
 - **[04 · 工具系统与 ToolRegistry](04-工具系统与ToolRegistry.md)**
-  `Tool` SPI、`ToolProvider`、`ToolRegistry`、18 个内置工具 + MCP 动态工具、并发执行、JSON Schema 自动生成。
+  `Tool` SPI、`ToolProvider`、`ToolRegistry`、15 个内置工具 + MCP 动态工具、并发执行、JSON Schema 自动生成。
 
 - **[05 · LLM 接入层与多模型支持](05-LLM接入层与多模型支持.md)**
   `ChatProvider` 抽象、OpenAI 兼容 / Kimi / Cursor、流式响应、Caffeine 缓存、Token 估算与限流。
@@ -42,9 +42,6 @@
 
 - **[07 · Hooks 自动化系统](07-Hooks自动化系统.md)**
   15 种 Hook 事件（Claude Code 对齐 9 + Jimi 扩展 3 + Agent Teams 扩展 3）、触发器 / 条件 / 执行器、典型自动化场景。
-
-- **[08 · 代码图谱与 RAG 检索](08-代码图谱与RAG检索.md)**
-  JavaParser AST 解析、`GraphManager`、混合检索（图 + 向量）、影响分析、`RagManager` 与 Embedding Provider。
 
 - **[10 · 记忆管理与会话机制](10-记忆管理与会话机制.md)**
   三层记忆架构（MEMORY.md / Topic / Session）、ReCAP 压缩、`SessionManager`、`Approval` 审批与 YOLO 模式。
@@ -87,8 +84,6 @@
 | Skills | `io.leavesfly.jimi.skill` | `SkillSpec`、`SkillRegistry`、`SkillLoader` |
 | Hooks | `io.leavesfly.jimi.core.hook` | `HookSpec`、`HookType`、`HookRegistry`、`HookExecutor` |
 | 插件系统 | `io.leavesfly.jimi.plugin` | `PluginRegistry`、`PluginLoader`、`PluginDispatcher`、`PluginInstaller`、`PluginModuleAdapter` |
-| 代码图谱 | `io.leavesfly.jimi.knowledge.graph` | `GraphManager`、`GraphSearchEngine` |
-| RAG | `io.leavesfly.jimi.knowledge.rag` | `RagManager`、`InMemoryVectorStore`、`EmbeddingProvider` |
 | 记忆系统 | `io.leavesfly.jimi.memory` | `MemoryManager`、`MemoryStore`、`MemoryExtractor` |
 | MCP | `io.leavesfly.jimi.mcp` | `JsonRpcClient`、`MCPConfig`、`StdIoJsonRpcClient` |
 | 命令系统 | `io.leavesfly.jimi.command` | `CommandRegistry`、`CommandHandler`、`CustomCommandSpec` |
@@ -126,9 +121,7 @@
 | [README](../README.md) | 项目门面 |
 | [用户使用指南](../用户使用指南.md) | 完整用户手册 |
 | [docs/HOOKS.md](../docs/HOOKS.md) | Hooks 用户指南 |
-| [docs/GRAPH_GUIDE.md](../docs/GRAPH_GUIDE.md) | 代码图谱使用 |
 | [docs/CUSTOM_COMMANDS.md](../docs/CUSTOM_COMMANDS.md) | 自定义命令使用 |
-| [docs/RAG配置指南.md](../docs/RAG配置指南.md) | RAG 配置 |
 | [docs/TECHNICAL_ARCHITECTURE.md](../docs/TECHNICAL_ARCHITECTURE.md) | 完整技术架构 |
 | [docs/PLUGIN_DEVELOPMENT.md](../docs/PLUGIN_DEVELOPMENT.md) | 插件开发用户手册（与本 Wiki 第 13 篇互补） |
 

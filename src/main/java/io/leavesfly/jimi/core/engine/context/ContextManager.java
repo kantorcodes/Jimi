@@ -20,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -31,6 +32,7 @@ import java.util.stream.Collectors;
  * - 上下文压缩检查和执行
  * - Skill 匹配和注入
  * - Topic 文件按需加载（Layer 2 记忆）
+ * - harness 状态快照刷新
  */
 @Slf4j
 @Component
@@ -41,6 +43,8 @@ public class ContextManager {
     private SkillRegistry skillRegistry;
     @Autowired
     private MemoryManager memoryManager;
+    @Autowired(required = false)
+    private HarnessStateSnapshot harnessStateSnapshot;
 
     /**
      * 设置依赖（用于 Spring Bean 注入后设置依赖）
@@ -80,8 +84,9 @@ public class ContextManager {
                             // 回退到检查点 0（保留系统提示词和初始检查点）
                             return context.revertTo(0)
                                     .then(Mono.defer(() -> {
-                                        // 添加压缩后的消息
-                                        return context.appendMessage(compactedMessages);
+                                        // 添加压缩后的消息（附带归档溯源锚点）
+                                        return context.appendMessage(
+                                                appendArchiveAnchor(compactedMessages, context.getLastArchivedPath()));
                                     }))
                                     .doOnSuccess(v -> {
                                         log.info("Context compacted successfully");
@@ -98,6 +103,64 @@ public class ContextManager {
         });
     }
 
+    /**
+     * 向压缩摘要追加归档溯源锚点
+     * <p>
+     * 压缩本身是有损的，但 {@code JSONLContextRepository.revertToCheckpoint} 会把压缩前的
+     * 完整历史轮转保存为 {@code xxx.jsonl.N}。锚点的作用是让模型知道这份归档存在、
+     * 并知道用什么手段取回 —— 存储可达不等于模型可达。
+     *
+     * @param compactedMessages 压缩产出的消息列表（第一条为摘要）
+     * @param archivedPath      归档文件路径，为 {@code null} 时原样返回
+     * @return 追加锚点后的消息列表
+     */
+    private List<Message> appendArchiveAnchor(List<Message> compactedMessages, Path archivedPath) {
+        if (archivedPath == null || compactedMessages == null || compactedMessages.isEmpty()) {
+            return compactedMessages;
+        }
+
+        Message summary = compactedMessages.get(0);
+        List<ContentPart> parts = new ArrayList<>(summary.getContentParts());
+        parts.add(TextPart.of(String.format(
+                "[原始历史已归档至 %s。需要还原细节时使用 Memory(action=search) 检索，"
+                        + "结果会标注归档来源与行号。]",
+                archivedPath.getFileName())));
+
+        Message anchored = Message.builder()
+                .role(summary.getRole())
+                .content(parts)
+                .build();
+
+        List<Message> result = new ArrayList<>(compactedMessages);
+        result.set(0, anchored);
+
+        log.info("Compaction anchor added, archived history: {}", archivedPath.getFileName());
+        return result;
+    }
+
+
+    /**
+     * 若 harness 状态发生变更则刷新快照
+     * <p>
+     * 使 Agent 在本次会话中写入的记忆 / 创建的技能 / 新增的补充指令能当场读到，
+     * 而不必等到下次启动。具体设计参见 {@link HarnessStateSnapshot}。
+     *
+     * @param context     上下文
+     * @param workDirPath 工作目录绝对路径
+     * @return 完成的 Mono
+     */
+    public Mono<Void> refreshHarnessState(Context context, String workDirPath) {
+        return Mono.fromRunnable(() -> {
+            if (harnessStateSnapshot == null) {
+                return;
+            }
+            try {
+                harnessStateSnapshot.refreshIfDirty(context, workDirPath);
+            } catch (Exception e) {
+                log.warn("Failed to refresh harness state snapshot", e);
+            }
+        });
+    }
 
     /**
      * 从上下文中提取用户查询

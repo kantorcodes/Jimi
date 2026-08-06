@@ -7,7 +7,9 @@ import io.leavesfly.jimi.core.engine.context.BuiltinSystemPromptArgs;
 import io.leavesfly.jimi.core.engine.JimiRuntime;
 import io.leavesfly.jimi.core.sandbox.SandboxValidator;
 import io.leavesfly.jimi.core.session.Session;
+import io.leavesfly.jimi.harness.HarnessJournal;
 import io.leavesfly.jimi.tool.core.BashTool;
+import io.leavesfly.jimi.tool.core.HarnessTool;
 import io.leavesfly.jimi.tool.core.MemoryTool;
 import io.leavesfly.jimi.tool.core.file.*;
 import io.leavesfly.jimi.tool.core.SkillsTool;
@@ -39,17 +41,20 @@ public class ToolRegistryFactory {
     private final ObjectMapper objectMapper;
     private final List<ToolProvider> toolProviders;
     private final MemoryManager memoryManager;
+    private final HarnessJournal harnessJournal;
 
     @Autowired
     public ToolRegistryFactory(
             ApplicationContext applicationContext,
             ObjectMapper objectMapper,
             List<ToolProvider> toolProviders,
-            MemoryManager memoryManager) {
+            MemoryManager memoryManager,
+            HarnessJournal harnessJournal) {
         this.applicationContext = applicationContext;
         this.objectMapper = objectMapper;
         this.toolProviders = toolProviders;
         this.memoryManager = memoryManager;
+        this.harnessJournal = harnessJournal;
     }
 
     /**
@@ -141,7 +146,8 @@ public class ToolRegistryFactory {
             WebSearch.class,
             SetTodoList.class,
             SkillsTool.class,  // 技能管理工具（渐进式披露）
-            MemoryTool.class   // 记忆管理工具
+            MemoryTool.class,  // 记忆管理工具
+            HarnessTool.class  // harness 状态统一 CRUD（prompt/memory/skill/subagent）
     );
 
     /**
@@ -209,6 +215,7 @@ public class ToolRegistryFactory {
             todoList.setSession(session);
         } else if (tool instanceof MemoryTool memoryTool) {
             memoryTool.setMemoryManager(memoryManager);
+            memoryTool.setHarnessJournal(harnessJournal);
             if (builtinArgs != null && builtinArgs.getJimiWorkDir() != null) {
                 String workDir = builtinArgs.getJimiWorkDir().toAbsolutePath().toString();
                 memoryTool.setWorkDirPath(workDir);
@@ -216,6 +223,15 @@ public class ToolRegistryFactory {
                 String dirHash = Integer.toHexString(workDir.hashCode());
                 memoryTool.setSessionsDir(
                         java.nio.file.Paths.get(System.getProperty("user.home"), ".jimi", "sessions", dirHash));
+            }
+        } else if (tool instanceof SkillsTool skillsTool) {
+            // 技能变更需要工作目录才能定位审计日志
+            if (builtinArgs != null && builtinArgs.getJimiWorkDir() != null) {
+                skillsTool.setWorkDirPath(builtinArgs.getJimiWorkDir().toAbsolutePath().toString());
+            }
+        } else if (tool instanceof HarnessTool harnessTool) {
+            if (builtinArgs != null && builtinArgs.getJimiWorkDir() != null) {
+                harnessTool.setWorkDirPath(builtinArgs.getJimiWorkDir().toAbsolutePath().toString());
             }
         }
         // FetchURL、WebSearch 无需额外初始化

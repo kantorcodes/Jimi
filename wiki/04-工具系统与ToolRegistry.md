@@ -89,7 +89,7 @@ public final Mono<ToolResult> execute(P params) {
 
 | 工具类别 | `isConcurrentSafe()` | 示例 |
 |---------|---------------------|------|
-| 纯读取 | `true`（默认） | `ReadFile` / `Grep` / `Glob` / `FetchURL` / `WebSearch` / `CodeLocateTool` 等 |
+| 纯读取 | `true`（默认） | `ReadFile` / `Grep` / `Glob` / `FetchURL` / `WebSearch` 等 |
 | 写入/执行 | `false`（显式 override） | `WriteFile` / `StrReplaceFile` / `BashTool` 等 |
 
 ---
@@ -210,7 +210,6 @@ public interface ToolProvider {
 | **50** | `TaskToolProvider` | `agentSpec.subagents` 非空 | `SubAgentTool`（@Prototype，每次新建并注入 runtime params） |
 | **55** | `TeamToolProvider` | `agentSpec.team.teammates` 非空 | `TeamAgentTool` |
 | **60** | `MCPToolProvider` | 外部调用了 `setMcpConfigFiles(...)` 且列表非空 | 由 `MCPToolLoader.loadFromFile()` 从 MCP 服务器加载的全部 MCP 工具 |
-| **100** | `CodeToolProvider` | `graphManager != null && graphManager.isEnabled()` | `CodeLocateTool`（需 `HybridSearch` 启用）、`ImpactAnalysisTool`、`CallGraphTool` |
 | **200** | `MetaToolProvider` | `metaToolConfig.enabled == true` | `MetaTool`——**执行时会注入 `ToolRegistry` 引用**，使其能在 JShell 里反向调用其他工具 |
 
 > ⚠️ **`exclude_tools` 的命名一致性陷阱**：`InteractionToolProvider.supports()` 里检测的是字符串 `"ask_human"`（snake_case），而 `AskHuman` 类构造器传入的 `getName()` 是 `"AskHuman"`（PascalCase）。也就是说，在 Agent YAML 里写 `exclude_tools: [ask_human]` 确实会命中 `InteractionToolProvider` 的过滤分支，使 `AskHuman` 不被加载——这是该 provider 当前唯一识别的禁用字符串。其他工具的 `exclude_tools` 匹配逻辑参见各自 provider 实现。
@@ -321,21 +320,13 @@ SkillsTool, MemoryTool                                 // 知识/记忆 × 2
 | `SubAgentTool` | ✓ | 把子任务派发到某个 subagent（见 03 篇 §4） |
 | `TeamAgentTool` | ✓ | 启动团队协作（见 03 篇 §5） |
 
-### 7.6 代码图谱（`tool/core/graph/`，通过 `CodeToolProvider` 加载）
-
-| 工具 | 并发安全 | 说明 |
-|------|:----:|------|
-| `CodeLocateTool` | ✓（默认） | 通过 `HybridSearch` 定位代码位置；`HybridSearch` 是 **`GraphManager`（Graph 搜索）+ `RagManager`（RAG 向量检索）的混合搜索**，使用 RRF（Reciprocal Rank Fusion，常数 `RRF_K=60`）融合两路结果 |
-| `ImpactAnalysisTool` | ✓（默认） | 基于 `GraphManager` 分析改动影响范围 |
-| `CallGraphTool` | ✓（默认） | 查询方法调用关系 |
-
-### 7.7 人机交互（通过 `InteractionToolProvider` 加载）
+### 7.6 人机交互（通过 `InteractionToolProvider` 加载）
 
 | 工具 | 并发安全 | 说明 |
 |------|:----:|------|
 | `AskHuman` | ✓（默认） | 工具 `getName()` 返回 `"AskHuman"`。通过 `HumanInteraction` 发起 3 种交互：`confirm`（确认/需要修改）、`input`（自由输入，支持 `defaultValue`）、`choice`（从 `choices` 列表选择）。**执行过程会阻塞等待用户输入**，但因为本身是 `Mono`，Reactor 调度不会阻塞底层线程池 |
 
-### 7.8 MetaTool（通过 `MetaToolProvider` 加载，order=200）
+### 7.7 MetaTool（通过 `MetaToolProvider` 加载，order=200）
 
 | 工具 | 并发安全 | 说明 |
 |------|:----:|------|
@@ -343,7 +334,7 @@ SkillsTool, MemoryTool                                 // 知识/记忆 × 2
 
 > ⚠️ **MetaTool 的并发安全提示**：虽然它继承 `true`，但如果 LLM 的脚本里调用了 `WriteFile`/`BashTool` 等非并发安全工具，实际安全性取决于脚本内容。当前设计让 MetaTool 以只读编排为主（描述中建议"中间结果不进入对话历史"的聚合场景）。
 
-### 7.9 MCP 动态工具（通过 `MCPToolProvider` 加载）
+### 7.8 MCP 动态工具（通过 `MCPToolProvider` 加载）
 
 `MCPTool`（`tool/core/mcp/MCPTool.java`）是单个 MCP 工具的代理。它的参数类型固定为 `Map<String, Object>`，所以必须覆写 `getCustomParametersSchema()`——这份 schema 直接来自 MCP 服务器 `tools/list` 响应里的 `inputSchema`。详见 **[11 · MCP 协议集成](11-MCP协议集成.md)**。
 
@@ -543,7 +534,6 @@ public Class<Map> getParamsType() {
 | `tool/provider/TaskToolProvider.java` | order=50，SubAgentTool |
 | `tool/provider/TeamToolProvider.java` | order=55，TeamAgentTool |
 | `tool/provider/MCPToolProvider.java` | order=60，MCP 动态工具 |
-| `tool/provider/CodeToolProvider.java` | order=100，图谱工具组 |
 | `tool/provider/MetaToolProvider.java` | order=200，MetaTool |
 | `core/engine/toolcall/ToolDispatcher.java` | 批次化调度，见 02 篇 §5 |
 | `core/engine/toolcall/ToolErrorTracker.java` | 错误熔断（`MAX_REPEATED_ERRORS=3`） |

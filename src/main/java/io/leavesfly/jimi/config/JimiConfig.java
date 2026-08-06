@@ -66,22 +66,6 @@ public class JimiConfig {
     private WebSearchConfig webSearch = new WebSearchConfig();
 
     /**
-     * 向量索引配置
-     */
-    @JsonProperty("vector_index")
-    @Valid
-    @Builder.Default
-    private VectorIndexConfig vectorIndex = new VectorIndexConfig();
-
-    /**
-     * 代码图配置
-     */
-    @JsonProperty("graph")
-    @Valid
-    @Builder.Default
-    private GraphConfig graph = new GraphConfig();
-
-    /**
      * Shell UI 配置
      */
     @JsonProperty("shell_ui")
@@ -120,6 +104,30 @@ public class JimiConfig {
     @Valid
     @Builder.Default
     private LoopEngineeringConfig loopEngineering = new LoopEngineeringConfig();
+
+    /**
+     * 工具输出配置（大输出落盘）
+     */
+    @JsonProperty("tool_output")
+    @Valid
+    @Builder.Default
+    private ToolOutputConfig toolOutput = new ToolOutputConfig();
+
+    /**
+     * 自我改进配置（默认关闭）
+     */
+    @JsonProperty("refine")
+    @Valid
+    @Builder.Default
+    private RefineConfig refine = new RefineConfig();
+
+    /**
+     * 子 Agent 编排配置
+     */
+    @JsonProperty("subagent")
+    @Valid
+    @Builder.Default
+    private SubagentConfig subagent = new SubagentConfig();
 
     
     /**

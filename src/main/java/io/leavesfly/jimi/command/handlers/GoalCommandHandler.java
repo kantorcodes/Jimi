@@ -4,6 +4,9 @@ import io.leavesfly.jimi.client.EngineClient;
 import io.leavesfly.jimi.command.CommandContext;
 import io.leavesfly.jimi.command.CommandHandler;
 import io.leavesfly.jimi.config.info.LoopEngineeringConfig;
+import io.leavesfly.jimi.config.info.RefineConfig;
+import io.leavesfly.jimi.harness.RefineEngine;
+import io.leavesfly.jimi.harness.TrajectoryReader;
 import io.leavesfly.jimi.loop.CommandVerifier;
 import io.leavesfly.jimi.loop.GoalVerification;
 import io.leavesfly.jimi.loop.GoalVerifier;
@@ -79,6 +82,15 @@ public class GoalCommandHandler implements CommandHandler {
 
     @Autowired
     private LoopEngineeringConfig config;
+
+    @Autowired
+    private RefineConfig refineConfig;
+
+    @Autowired
+    private RefineEngine refineEngine;
+
+    @Autowired
+    private TrajectoryReader trajectoryReader;
 
     private final ExecutorService executor;
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -365,6 +377,53 @@ public class GoalCommandHandler implements CommandHandler {
     // ==================== Goal Loop 核心逻辑 ====================
 
     /**
+     * 验证连续失败达到阈值时触发一次自我改进
+     * <p>
+     * 这是 loop 迭代间真正的学习环节：不再只把失败原因拼进一次性的 worker prompt，
+     * 而是尝试把教训固化为 harness 补充层的持久增量。变更经过四条护栏约束，
+     * 失败不影响主循环继续推进。
+     *
+     * @param workDir                  工作目录
+     * @param consecutiveVerifyFailures 当前连续验证失败次数
+     * @param lastVerifyReason         最近一次验证未通过的原因
+     */
+    private void maybeRefine(Path workDir, int consecutiveVerifyFailures, String lastVerifyReason) {
+        if (!refineConfig.isEnabled()) {
+            return;
+        }
+        int threshold = refineConfig.getTriggerOnVerifyFailures();
+        if (threshold <= 0 || consecutiveVerifyFailures < threshold) {
+            return;
+        }
+
+        try {
+            String workDirPath = workDir.toAbsolutePath().toString();
+            String trajectory = trajectoryReader.readRecent(workDirPath, refineConfig.getTrajectoryWindow());
+            if (trajectory.isBlank()) {
+                return;
+            }
+
+            String focus = lastVerifyReason != null && !lastVerifyReason.isBlank()
+                    ? "目标验证已连续失败 " + consecutiveVerifyFailures + " 次，最近原因：" + lastVerifyReason
+                    : "目标验证已连续失败 " + consecutiveVerifyFailures + " 次";
+
+            RefineEngine.RefineResult result = refineEngine
+                    .run(workDirPath, "goal-verify-failed-x" + consecutiveVerifyFailures, trajectory, focus)
+                    .block();
+
+            if (result != null && result.isApplied()) {
+                log.info("Refine applied after {} consecutive verify failures: change #{}",
+                        consecutiveVerifyFailures, result.change().getId());
+            } else if (result != null) {
+                log.debug("Refine produced no change: {} - {}", result.status(), result.message());
+            }
+        } catch (Exception e) {
+            // refine 是辅助能力，失败不得中断目标循环
+            log.warn("Refine attempt failed, continuing goal loop", e);
+        }
+    }
+
+    /**
      * Goal Loop 主循环（在后台线程运行）
      */
     private void runGoalLoop(EngineClient engineClient, Path workDir, Path executionDir,
@@ -376,6 +435,7 @@ public class GoalCommandHandler implements CommandHandler {
         long maxTokens = config.getGoalMaxTokens();
         boolean satisfied = false;
         String lastVerifyReason = null;
+        int consecutiveVerifyFailures = 0;
 
         log.info("Goal loop started: condition='{}', verifyCmd='{}', worktree={}, maxIter={}, timeout={}m, maxTokens={}",
                 goalCondition, verifyCommand, worktreeDir, maxIterations, timeout.toMinutes(), maxTokens);
@@ -452,6 +512,10 @@ public class GoalCommandHandler implements CommandHandler {
 
                     lastVerifyReason = verification != null ? verification.getReason() : null;
                     log.debug("Goal not yet satisfied: {}", lastVerifyReason);
+
+                    // 验证连续失败意味着当前做法反复撞墙，尝试从轨迹中提炼改进
+                    consecutiveVerifyFailures++;
+                    maybeRefine(workDir, consecutiveVerifyFailures, lastVerifyReason);
                 }
 
                 // 更新状态

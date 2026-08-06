@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * 上下文管理器
@@ -54,6 +55,14 @@ public class Context {
      * 激活的 Skills 列表
      */
     private final List<SkillSpec> activeSkills;
+
+    /**
+     * 最近一次回退（含上下文压缩）产生的归档文件路径
+     * <p>
+     * 压缩时原始历史会被轮转保存，此字段用于让上层构造溯源锚点，
+     * 告知模型压缩前的完整历史仍可通过 Memory 搜索检索。
+     */
+    private Path lastArchivedPath;
 
 
     /**
@@ -205,6 +214,7 @@ public class Context {
                         history.addAll(restoredContext.getMessages());
                         this.tokenCount = restoredContext.getTokenCount();
                         this.nextCheckpointId = restoredContext.getNextCheckpointId();
+                        this.lastArchivedPath = restoredContext.getArchivedPath();
 
                         log.info("Reverted to checkpoint {}: {} messages, {} tokens",
                                 checkpointId, history.size(), tokenCount);
@@ -215,10 +225,52 @@ public class Context {
     }
 
     /**
+     * 获取最近一次回退（含上下文压缩）产生的归档文件路径
+     *
+     * @return 归档文件路径，从未发生回退时为 {@code null}
+     */
+    public Path getLastArchivedPath() {
+        return lastArchivedPath;
+    }
+
+    /**
      * 获取消息历史（只读视图）
      */
     public List<Message> getHistory() {
         return Collections.unmodifiableList(history);
+    }
+
+    /**
+     * 追加一条瞬态消息（仅内存，不持久化）
+     * <p>
+     * 适用于可从外部状态重算的<b>派生信息</b>（如 harness 状态快照）。
+     * 这类消息不写入 append-only 的 JSONL：一旦写入，后续去重就会造成
+     * 内存与磁盘不一致；而不写入则可在需要时随时重建。
+     *
+     * @param message 待追加的瞬态消息
+     */
+    public void appendTransientMessage(Message message) {
+        if (message != null) {
+            history.add(message);
+        }
+    }
+
+    /**
+     * 移除满足条件的瞬态消息（仅内存）
+     * <p>
+     * 谓词必须只能匹配由 {@link #appendTransientMessage(Message)} 注入的消息，
+     * 否则会造成内存历史与持久化历史偏离。
+     *
+     * @param predicate 匹配条件
+     * @return 实际移除的消息数
+     */
+    public int removeTransientMessages(Predicate<Message> predicate) {
+        if (predicate == null) {
+            return 0;
+        }
+        int before = history.size();
+        history.removeIf(predicate);
+        return before - history.size();
     }
 
     /**
