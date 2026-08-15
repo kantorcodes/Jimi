@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -185,6 +186,9 @@ public class HookExecutor {
             if (context.getWorkDir() != null) {
                 processBuilder.directory(context.getWorkDir().toFile());
             }
+            // 丢弃输出，避免管道写满导致进程阻塞、waitFor 必然超时误判为失败
+            processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
 
             Process process = processBuilder.start();
             boolean completed = process.waitFor(5, TimeUnit.SECONDS);
@@ -245,9 +249,10 @@ public class HookExecutor {
                 // 通过 stdin 传递 JSON 上下文（对齐 Claude Code）
                 writeStdinJson(process, context);
 
-                // 读取 stdout 和 stderr
-                String stdout = readStream(process.getInputStream());
-                String stderr = readStream(process.getErrorStream());
+                // 并行读取 stdout/stderr：串行读取会在输出超过管道缓冲时互相死锁，
+                // 且在读取前无法执行超时等待
+                CompletableFuture<String> stdoutFuture = readStreamAsync(process.getInputStream());
+                CompletableFuture<String> stderrFuture = readStreamAsync(process.getErrorStream());
 
                 int effectiveTimeout = execution.getTimeout() > 0 ? execution.getTimeout() : 60;
                 boolean completed = process.waitFor(effectiveTimeout, TimeUnit.SECONDS);
@@ -257,6 +262,9 @@ public class HookExecutor {
                     log.error("Hook script timed out after {}s: {}", effectiveTimeout, hook.getName());
                     return HookResult.error("Script timed out after " + effectiveTimeout + "s");
                 }
+
+                String stdout = stdoutFuture.get(5, TimeUnit.SECONDS);
+                String stderr = stderrFuture.get(5, TimeUnit.SECONDS);
 
                 int exitCode = process.exitValue();
                 Map<String, Object> jsonOutput = parseJsonOutput(stdout);
@@ -318,7 +326,9 @@ public class HookExecutor {
 
         return Flux.fromIterable(steps)
                 .concatMap(step -> executeStep(step, hook.getName(), context))
-                .takeUntil(result -> !result.isSuccess() && !isStepContinueOnFailure(steps, result))
+                // executeStep 已按各步骤自身的 continueOnFailure 决定是否继续，
+                // 这里只需在出现失败结果时终止后续步骤
+                .takeUntil(result -> !result.isSuccess())
                 .last()
                 .defaultIfEmpty(HookResult.success());
     }
@@ -341,7 +351,8 @@ public class HookExecutor {
                 processBuilder.redirectErrorStream(true);
 
                 Process process = processBuilder.start();
-                String output = readStream(process.getInputStream());
+                // 异步读取输出：同步读取会在进程挂起时阻塞当前线程，使超时检查永远执行不到
+                CompletableFuture<String> outputFuture = readStreamAsync(process.getInputStream());
 
                 int timeout = step.getTimeout() > 0 ? step.getTimeout() : 60;
                 boolean completed = process.waitFor(timeout, TimeUnit.SECONDS);
@@ -352,6 +363,8 @@ public class HookExecutor {
                     log.error("{} in hook '{}'", errorMessage, hookName);
                     return HookResult.error(errorMessage);
                 }
+
+                String output = outputFuture.get(5, TimeUnit.SECONDS);
 
                 int exitCode = process.exitValue();
                 if (exitCode != EXIT_CODE_SUCCESS) {
@@ -369,12 +382,6 @@ public class HookExecutor {
                 return HookResult.error("Step execution failed: " + e.getMessage());
             }
         });
-    }
-
-    private boolean isStepContinueOnFailure(List<ExecutionSpec.ExecutionStep> steps,
-                                            HookResult result) {
-        // 如果当前步骤配置了 continueOnFailure，则继续执行
-        return steps.stream().anyMatch(ExecutionSpec.ExecutionStep::isContinueOnFailure);
     }
 
     /**
@@ -423,6 +430,14 @@ public class HookExecutor {
             log.debug("Failed to read process stream: {}", e.getMessage());
             return "";
         }
+    }
+
+    /**
+     * 在独立线程中异步读取进程流，避免串行读取造成的死锁与超时失效
+     */
+    private CompletableFuture<String> readStreamAsync(java.io.InputStream inputStream) {
+        return CompletableFuture.supplyAsync(
+                () -> readStream(inputStream), Schedulers.boundedElastic()::schedule);
     }
 
     private String getScriptContent(ExecutionSpec execution) throws Exception {

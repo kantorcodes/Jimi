@@ -1,5 +1,6 @@
 package io.leavesfly.jimi.core.engine.context;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.leavesfly.jimi.llm.message.Message;
@@ -67,23 +68,28 @@ public class JSONLContextRepository implements ContextRepository {
                         continue;
                     }
                     
-                    ObjectNode lineJson = objectMapper.readValue(line, ObjectNode.class);
-                    String role = lineJson.get("role").asText();
-                    
-                    // 处理元数据
-                    if ("_usage".equals(role)) {
-                        tokenCount = lineJson.get("token_count").asInt();
-                        continue;
+                    try {
+                        ObjectNode lineJson = objectMapper.readValue(line, ObjectNode.class);
+                        String role = lineJson.path("role").asText();
+                        
+                        // 处理元数据
+                        if ("_usage".equals(role)) {
+                            tokenCount = lineJson.path("token_count").asInt();
+                            continue;
+                        }
+                        
+                        if ("_checkpoint".equals(role)) {
+                            nextCheckpointId = lineJson.path("id").asInt() + 1;
+                            continue;
+                        }
+                        
+                        // 解析为普通消息
+                        Message message = objectMapper.readValue(line, Message.class);
+                        messages.add(message);
+                    } catch (JsonProcessingException e) {
+                        // 单行损坏（如进程写入时被杀导致截断）不应阻断整个会话恢复
+                        log.warn("Skipping malformed JSONL line in {}: {}", fileBackend, e.getMessage());
                     }
-                    
-                    if ("_checkpoint".equals(role)) {
-                        nextCheckpointId = lineJson.get("id").asInt() + 1;
-                        continue;
-                    }
-                    
-                    // 解析为普通消息
-                    Message message = objectMapper.readValue(line, Message.class);
-                    messages.add(message);
                 }
             }
             
@@ -172,10 +178,10 @@ public class JSONLContextRepository implements ContextRepository {
                         }
                         
                         ObjectNode lineJson = objectMapper.readValue(line, ObjectNode.class);
-                        String role = lineJson.get("role").asText();
+                        String role = lineJson.path("role").asText();
                         
                         // 遇到目标检查点时停止
-                        if ("_checkpoint".equals(role) && lineJson.get("id").asInt() == checkpointId) {
+                        if ("_checkpoint".equals(role) && lineJson.path("id").asInt() == checkpointId) {
                             break;
                         }
                         
@@ -185,9 +191,9 @@ public class JSONLContextRepository implements ContextRepository {
                         
                         // 恢复到内存
                         if ("_usage".equals(role)) {
-                            tokenCount = lineJson.get("token_count").asInt();
+                            tokenCount = lineJson.path("token_count").asInt();
                         } else if ("_checkpoint".equals(role)) {
-                            nextCheckpointId = lineJson.get("id").asInt() + 1;
+                            nextCheckpointId = lineJson.path("id").asInt() + 1;
                         } else {
                             Message message = objectMapper.readValue(line, Message.class);
                             messages.add(message);

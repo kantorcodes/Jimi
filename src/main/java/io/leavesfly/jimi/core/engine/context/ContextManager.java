@@ -182,23 +182,6 @@ public class ContextManager {
 
 
     /**
-     * 匹配和注入 Skills（已废弃，改为渐进式披露模式）
-     * 
-     * 新架构：
-     * - 技能摘要在 System Prompt 中提供（通过 getSkillsSummary()）
-     * - 大模型通过 SkillsTool 主动调用加载完整技能内容
-     * 
-     * @param context 上下文
-     * @param stepNo  当前步骤号
-     * @return 完成的 Mono（始终为空，不再自动注入）
-     */
-    public Mono<Void> matchAndInjectSkills(Context context, int stepNo) {
-        // 渐进式披露模式：不再自动匹配和注入技能
-        // 技能摘要已在 System Prompt 中提供，大模型通过 SkillsTool 按需加载
-        return Mono.empty();
-    }
-
-    /**
      * 获取技能摘要（用于 System Prompt 注入）
      * 
      * @return 技能摘要 Markdown 字符串，如果没有技能则返回空字符串

@@ -85,7 +85,8 @@ public class MCPSchema {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class TextContent implements Content {
-        /** 内容类型标识 */
+        /** 内容类型标识（@Builder.Default 防止 Lombok 构建时忽略字段初始值） */
+        @Builder.Default
         @JsonProperty("type")
         private String type = "text";
         
@@ -103,7 +104,8 @@ public class MCPSchema {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class ImageContent implements Content {
-        /** 内容类型标识 */
+        /** 内容类型标识（@Builder.Default 防止 Lombok 构建时忽略字段初始值） */
+        @Builder.Default
         @JsonProperty("type")
         private String type = "image";
         
@@ -125,7 +127,8 @@ public class MCPSchema {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class EmbeddedResource implements Content {
-        /** 内容类型标识 */
+        /** 内容类型标识（@Builder.Default 防止 Lombok 构建时忽略字段初始值） */
+        @Builder.Default
         @JsonProperty("type")
         private String type = "resource";
         

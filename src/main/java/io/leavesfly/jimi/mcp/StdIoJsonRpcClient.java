@@ -7,10 +7,14 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -24,9 +28,13 @@ public class StdIoJsonRpcClient extends AbstractJsonRpcClient {
     private final BufferedWriter writer;
     private final BufferedReader reader;
     private final AtomicInteger requestIdCounter = new AtomicInteger(1);
-    private final Map<Object, JsonRpcMessage.Response> responseCache = new ConcurrentHashMap<>();
+    private final Map<Object, CompletableFuture<JsonRpcMessage.Response>> pendingRequests = new ConcurrentHashMap<>();
+    /** 写锁：仅保护 writer 写入，避免多线程写入交错；等待响应不持锁 */
+    private final Object writeLock = new Object();
     private final Thread readerThread;
     private volatile boolean closed = false;
+
+    private static final long REQUEST_TIMEOUT_SECONDS = 30;
 
     /**
      * 构造 STDIO JSON-RPC 客户端
@@ -56,11 +64,12 @@ public class StdIoJsonRpcClient extends AbstractJsonRpcClient {
         Process startedProcess = null;
         try {
             startedProcess = pb.start();
-            this.writer = new BufferedWriter(new OutputStreamWriter(startedProcess.getOutputStream()));
-            this.reader = new BufferedReader(new InputStreamReader(startedProcess.getInputStream()));
+            // MCP 协议规定使用 UTF-8 编码，显式指定避免平台默认字符集（如 Windows GBK）导致乱码
+            this.writer = new BufferedWriter(new OutputStreamWriter(startedProcess.getOutputStream(), StandardCharsets.UTF_8));
+            this.reader = new BufferedReader(new InputStreamReader(startedProcess.getInputStream(), StandardCharsets.UTF_8));
             this.process = startedProcess;
 
-            this.readerThread = new Thread(this::readLoop, "MCP-Reader");
+            this.readerThread = new Thread(this::readLoop, "MCP-Reader-" + command);
             this.readerThread.setDaemon(true);
             this.readerThread.start();
         } catch (IOException e) {
@@ -74,7 +83,7 @@ public class StdIoJsonRpcClient extends AbstractJsonRpcClient {
     }
 
     @Override
-    protected synchronized JsonRpcMessage.Response sendRequest(String method, Map<String, Object> params) throws Exception {
+    protected JsonRpcMessage.Response sendRequest(String method, Map<String, Object> params) throws Exception {
         Object requestId = requestIdCounter.getAndIncrement();
 
         JsonRpcMessage.Request request = JsonRpcMessage.Request.builder()
@@ -87,22 +96,53 @@ public class StdIoJsonRpcClient extends AbstractJsonRpcClient {
         String requestJson = objectMapper.writeValueAsString(request);
         log.debug("Sending MCP request: {}", requestJson);
 
-        writer.write(requestJson);
-        writer.write("\n");
-        writer.flush();
+        // 先登记等待句柄再发送，避免响应先于登记到达而丢失
+        CompletableFuture<JsonRpcMessage.Response> future = new CompletableFuture<>();
+        pendingRequests.put(requestId, future);
 
-        long startTime = System.currentTimeMillis();
-        while (!responseCache.containsKey(requestId)) {
-            if (closed) {
-                throw new RuntimeException("Client closed");
-            }
-            if (System.currentTimeMillis() - startTime > 30000) {
-                throw new RuntimeException("Request timeout");
-            }
-            Thread.sleep(100);
+        try {
+            writeLine(requestJson);
+        } catch (Exception e) {
+            pendingRequests.remove(requestId);
+            throw e;
         }
 
-        return responseCache.remove(requestId);
+        // 等待响应不持锁，多个请求可并行在途（JSON-RPC 通过 id 匹配响应）
+        try {
+            return future.get(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            pendingRequests.remove(requestId);
+            throw new RuntimeException("Request timeout: method=" + method + ", id=" + requestId);
+        } catch (InterruptedException e) {
+            pendingRequests.remove(requestId);
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Request interrupted: method=" + method + ", id=" + requestId);
+        }
+    }
+
+    @Override
+    protected void sendNotification(String method, Map<String, Object> params) throws Exception {
+        JsonRpcMessage.Request notification = JsonRpcMessage.Request.builder()
+                .jsonrpc("2.0")
+                .method(method)
+                .params(params)
+                .build();
+
+        String notificationJson = objectMapper.writeValueAsString(notification);
+        log.debug("Sending MCP notification: {}", notificationJson);
+        writeLine(notificationJson);
+    }
+
+    /**
+     * 写一行 JSON 消息到底层进程标准输入
+     * 多线程并发写入时通过写锁保证消息不被交错拆分
+     */
+    private void writeLine(String json) throws IOException {
+        synchronized (writeLock) {
+            writer.write(json);
+            writer.write("\n");
+            writer.flush();
+        }
     }
 
     /**
@@ -118,8 +158,19 @@ public class StdIoJsonRpcClient extends AbstractJsonRpcClient {
                 log.debug("Received MCP response: {}", line);
                 try {
                     JsonRpcMessage.Response response = objectMapper.readValue(line, JsonRpcMessage.Response.class);
-                    if (response.getId() != null) {
-                        responseCache.put(response.getId(), response);
+                    if (response.getId() == null) {
+                        // 服务端通知（无 id），忽略
+                        continue;
+                    }
+                    if (response.getResult() == null && response.getError() == null) {
+                        // 既无 result 也无 error 的消息不是合法响应（可能是服务端发起的请求），
+                        // 忽略以避免用空响应错误地完成等待中的 future
+                        log.warn("Ignoring non-response message with id={}: {}", response.getId(), line);
+                        continue;
+                    }
+                    CompletableFuture<JsonRpcMessage.Response> future = pendingRequests.remove(response.getId());
+                    if (future != null) {
+                        future.complete(response);
                     }
                 } catch (Exception e) {
                     log.warn("Failed to parse response: {}", e.getMessage());
@@ -129,12 +180,23 @@ public class StdIoJsonRpcClient extends AbstractJsonRpcClient {
             if (!closed) {
                 log.error("Error reading from MCP process: {}", e.getMessage());
             }
+        } finally {
+            // 进程退出或连接断开时，失败所有未完成的请求避免调用方阻塞到超时
+            if (!closed) {
+                pendingRequests.forEach((id, future) ->
+                        future.completeExceptionally(new RuntimeException("MCP process stream closed")));
+                pendingRequests.clear();
+            }
         }
     }
 
     @Override
     public void close() throws Exception {
         closed = true;
+        pendingRequests.forEach((id, future) ->
+                future.completeExceptionally(new RuntimeException("Client closed")));
+        pendingRequests.clear();
+
         if (writer != null) {
             writer.close();
         }
@@ -143,7 +205,10 @@ public class StdIoJsonRpcClient extends AbstractJsonRpcClient {
         }
         if (process != null) {
             process.destroy();
-            process.waitFor();
+            // 限时等待，避免子进程不响应 destroy 时无限阻塞关闭流程
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+            }
         }
         if (readerThread != null) {
             readerThread.interrupt();

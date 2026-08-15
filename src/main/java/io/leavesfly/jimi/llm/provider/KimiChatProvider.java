@@ -224,8 +224,17 @@ public class KimiChatProvider implements ChatProvider {
      * 解析非流式响应
      */
     private ChatCompletionResult parseResponse(JsonNode response) {
-        JsonNode choice = response.get("choices").get(0);
+        // 防御：网关/代理异常时可能返回缺少 choices 的响应体，避免 NPE
+        JsonNode choices = response.get("choices");
+        if (choices == null || !choices.isArray() || choices.isEmpty()) {
+            String errorInfo = response.has("error") ? response.get("error").toString() : response.toString();
+            throw new IllegalStateException("Kimi response has no valid choices: " + errorInfo);
+        }
+        JsonNode choice = choices.get(0);
         JsonNode message = choice.get("message");
+        if (message == null || message.isNull()) {
+            throw new IllegalStateException("Kimi response choice has no message");
+        }
 
         // 解析消息
         Message msg = parseMessage(message);
@@ -250,7 +259,7 @@ public class KimiChatProvider implements ChatProvider {
      * 解析消息
      */
     private Message parseMessage(JsonNode messageNode) {
-        String role = messageNode.get("role").asText();
+        String role = messageNode.has("role") ? messageNode.get("role").asText() : "assistant";
         String content = messageNode.has("content") && !messageNode.get("content").isNull()
                 ? messageNode.get("content").asText()
                 : null;
@@ -286,8 +295,22 @@ public class KimiChatProvider implements ChatProvider {
     private ChatCompletionChunk parseStreamChunk(String data) {
         try {
             JsonNode chunk = objectMapper.readTree(data);
-            JsonNode choice = chunk.get("choices").get(0);
+            // 防御：流式帧可能缺少 choices（如心跳/用量帧），返回空块而非 NPE
+            JsonNode choices = chunk.get("choices");
+            if (choices == null || !choices.isArray() || choices.isEmpty()) {
+                return ChatCompletionChunk.builder()
+                        .type(ChatCompletionChunk.ChunkType.CONTENT)
+                        .contentDelta("")
+                        .build();
+            }
+            JsonNode choice = choices.get(0);
             JsonNode delta = choice.get("delta");
+            if (delta == null || delta.isNull()) {
+                return ChatCompletionChunk.builder()
+                        .type(ChatCompletionChunk.ChunkType.CONTENT)
+                        .contentDelta("")
+                        .build();
+            }
 
             // 检查是否完成
             if (choice.has("finish_reason") && !choice.get("finish_reason").isNull()) {

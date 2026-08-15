@@ -4,6 +4,7 @@ package io.leavesfly.jimi.core.engine.toolcall;
 import io.leavesfly.jimi.core.engine.context.Context;
 import io.leavesfly.jimi.config.info.ToolOutputConfig;
 import io.leavesfly.jimi.core.hook.HookContext;
+import io.leavesfly.jimi.core.hook.HookExecutor;
 import io.leavesfly.jimi.core.hook.HookRegistry;
 import io.leavesfly.jimi.core.hook.HookType;
 
@@ -174,7 +175,8 @@ public class ToolDispatcher {
         if (batch.parallel && batch.toolCalls.size() > 1) {
             log.info("Executing parallel batch of {} concurrent-safe tool calls", batch.toolCalls.size());
             return Flux.fromIterable(batch.toolCalls)
-                    .flatMap(toolCall -> executeToolCallSafely(toolCall, context)
+                    // flatMapSequential：并发执行但按原始顺序发射，保证工具结果与 tool_calls 顺序一致
+                    .flatMapSequential(toolCall -> executeToolCallSafely(toolCall, context)
                                     .subscribeOn(Schedulers.boundedElastic()),
                             MAX_PARALLEL_CONCURRENCY)
                     .collectList();
@@ -265,20 +267,32 @@ public class ToolDispatcher {
                 .toolCallId(toolCallId)
                 .build();
 
-        return triggerHookSafely(HookType.PRE_TOOL_USE, preHookContext)
-                .then(toolRegistry.execute(toolName, arguments))
-                .flatMap(result -> {
-                    // 触发 POST_TOOL_USE hook（异步，不阻塞主流程）
-                    HookContext postHookContext = HookContext.builder()
-                            .hookType(HookType.POST_TOOL_USE)
-                            .workDir(workDir)
-                            .toolName(toolName)
-                            .toolCallId(toolCallId)
-                            .toolResult(formatToolResult(result))
-                            .build();
-                    triggerHookSafely(HookType.POST_TOOL_USE, postHookContext).subscribe();
+        return triggerPreHookSafely(preHookContext)
+                .defaultIfEmpty("")
+                .flatMap(blockReason -> {
+                    if (!blockReason.isBlank()) {
+                        // PRE_TOOL_USE hook 阻塞了本次工具调用（对齐 Claude Code exit code 2 语义）
+                        log.warn("Tool call blocked by PRE_TOOL_USE hook: {} ({})", toolName, blockReason);
+                        ToolResult blockedResult = ToolResult.error(
+                                "Tool call blocked by hook: " + blockReason, "Blocked by hook");
+                        wire.send(new ToolResultMessage(toolCallId, blockedResult));
+                        return Mono.just(Message.tool(toolCallId,
+                                "Tool call was blocked by a PRE_TOOL_USE hook: " + blockReason));
+                    }
+                    return toolRegistry.execute(toolName, arguments)
+                            .flatMap(result -> {
+                                // 触发 POST_TOOL_USE hook（异步，不阻塞主流程）
+                                HookContext postHookContext = HookContext.builder()
+                                        .hookType(HookType.POST_TOOL_USE)
+                                        .workDir(workDir)
+                                        .toolName(toolName)
+                                        .toolCallId(toolCallId)
+                                        .toolResult(formatToolResult(result))
+                                        .build();
+                                triggerHookSafely(HookType.POST_TOOL_USE, postHookContext).subscribe();
 
-                    return processToolResult(result, toolName, toolCallId, toolSignature, context);
+                                return processToolResult(result, toolName, toolCallId, toolSignature, context);
+                            });
                 })
                 .onErrorResume(e -> {
                     // 触发 POST_TOOL_USE_FAILURE hook（异步）
@@ -305,6 +319,27 @@ public class ToolDispatcher {
         return hookRegistry.trigger(type, context)
                 .onErrorResume(e -> {
                     log.warn("Hook trigger failed for {}: {}", type, e.getMessage());
+                    return Mono.empty();
+                });
+    }
+
+    /**
+     * 触发 PRE_TOOL_USE hook 并返回阻塞原因
+     *
+     * @return 阻塞原因；未被阻塞时发射 empty
+     */
+    private Mono<String> triggerPreHookSafely(HookContext context) {
+        if (hookRegistry == null) {
+            return Mono.empty();
+        }
+        return hookRegistry.triggerWithResults(HookType.PRE_TOOL_USE, context)
+                .flatMapIterable(results -> results)
+                .filter(HookExecutor.HookResult::isBlocked)
+                .next()
+                .map(blocked -> blocked.getReason() != null && !blocked.getReason().isBlank()
+                        ? blocked.getReason() : "Blocked by hook")
+                .onErrorResume(e -> {
+                    log.warn("Hook trigger failed for PRE_TOOL_USE: {}", e.getMessage());
                     return Mono.empty();
                 });
     }

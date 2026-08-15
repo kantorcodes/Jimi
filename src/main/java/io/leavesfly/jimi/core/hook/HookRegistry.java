@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
 /**
@@ -36,7 +37,7 @@ public class HookRegistry {
      * Key: HookType, Value: Hook 列表(按优先级排序)
      */
     private final Map<HookType, List<HookSpec>> hooksByType = new ConcurrentHashMap<>();
-    
+
     /**
      * 所有注册的 Hook
      * Key: Hook 名称, Value: HookSpec
@@ -111,12 +112,13 @@ public class HookRegistry {
             // 添加到总列表
             allHooks.put(spec.getName(), spec);
             
-            // 按类型组织
+            // 按类型组织（CopyOnWriteArrayList 保证触发遍历与注册/注销并发安全）
             HookType type = spec.getTrigger().getType();
-            hooksByType.computeIfAbsent(type, k -> new ArrayList<>()).add(spec);
+            List<HookSpec> hooks = hooksByType.computeIfAbsent(type, k -> new CopyOnWriteArrayList<>());
+            hooks.add(spec);
             
             // 按优先级排序
-            hooksByType.get(type).sort(
+            hooks.sort(
                 Comparator.comparingInt(HookSpec::getPriority).reversed()
             );
             
@@ -152,36 +154,49 @@ public class HookRegistry {
      * @return 异步执行结果
      */
     public Mono<Void> trigger(HookType type, HookContext context) {
+        return triggerWithResults(type, context).then();
+    }
+
+    /**
+     * 触发指定类型的所有 Hook 并收集执行结果
+     * <p>
+     * 供需要感知 Hook 决策的调用方使用（如 PRE_TOOL_USE 的阻塞语义）。
+     *
+     * @param type    Hook 类型
+     * @param context Hook 上下文
+     * @return 各 Hook 的执行结果列表
+     */
+    public Mono<List<HookExecutor.HookResult>> triggerWithResults(HookType type, HookContext context) {
         List<HookSpec> hooks = getHooks(type);
-        
+
         if (hooks.isEmpty()) {
             log.debug("No hooks registered for type: {}", type);
-            return Mono.empty();
+            return Mono.just(Collections.emptyList());
         }
-        
+
         log.debug("Triggering {} hooks for type: {}", hooks.size(), type);
-        
+
         // 过滤匹配的 Hook
         List<HookSpec> matchedHooks = hooks.stream()
                 .filter(HookSpec::isEnabled)
                 .filter(hook -> matches(hook, context))
                 .toList();
-        
+
         if (matchedHooks.isEmpty()) {
             log.debug("No matching hooks for type: {}", type);
-            return Mono.empty();
+            return Mono.just(Collections.emptyList());
         }
-        
+
         log.info("Executing {} matched hooks for type: {}", matchedHooks.size(), type);
-        
+
         // 依次执行所有匹配的 Hook (按优先级顺序，非阻塞)
         return Flux.fromIterable(matchedHooks)
-                .concatMap(hook -> executor.execute(hook, context)
+                .concatMap(hook -> executor.executeWithResult(hook, context)
                         .onErrorResume(e -> {
                             log.error("Hook execution failed: {}", hook.getName(), e);
                             return Mono.empty();
                         }))
-                .then();
+                .collectList();
     }
     
     /**
@@ -268,11 +283,21 @@ public class HookRegistry {
      * 简单的 glob 模式匹配
      */
     private boolean matchesPattern(String fileName, String pattern) {
-        // 简化的 glob 匹配,支持 * 和 ?
-        String regex = pattern.replace(".", "\\.")
-                .replace("*", ".*")
-                .replace("?", ".");
-        return fileName.matches(regex);
+        // 简化的 glob 匹配,支持 * 和 ?；先转义正则特殊字符避免非法正则异常
+        StringBuilder regex = new StringBuilder();
+        for (char c : pattern.toCharArray()) {
+            switch (c) {
+                case '*' -> regex.append(".*");
+                case '?' -> regex.append('.');
+                default -> {
+                    if ("\\.^$|()[]{}+".indexOf(c) >= 0) {
+                        regex.append('\\');
+                    }
+                    regex.append(c);
+                }
+            }
+        }
+        return fileName.matches(regex.toString());
     }
     
     /**

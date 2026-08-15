@@ -16,6 +16,7 @@ import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -239,6 +240,9 @@ public class BashTool extends AbstractTool<BashTool.Params> {
                     process.destroyForcibly();
                 }
             }
-        });
+        })
+        // 命令执行是阻塞式 I/O（waitFor 最长可达超时时间），调度到弹性线程池
+        // 避免占用引擎订阅线程，与 SyncTool/MCPTool 的处理方式保持一致
+        .subscribeOn(Schedulers.boundedElastic());
     }
 }

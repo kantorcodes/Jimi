@@ -1,7 +1,6 @@
 package io.leavesfly.jimi.core.engine.context;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.leavesfly.jimi.llm.message.ContentPart;
 import io.leavesfly.jimi.llm.message.Message;
 import io.leavesfly.jimi.llm.message.MessageRole;
 import io.leavesfly.jimi.llm.message.TextPart;
@@ -346,53 +345,4 @@ public class Context {
     }
 
     // ==================== 内部辅助方法 ====================
-
-    /**
-     * 判断消息列表是否为用户消息
-     */
-    private boolean isUserMessage(List<Message> messages) {
-        return !messages.isEmpty() && messages.get(0).getRole() == MessageRole.USER;
-    }
-
-
-    /**
-     * 从用户消息中提取意图（简化版：取前 200 字符）
-     */
-    @SuppressWarnings("unchecked")
-    private String extractIntentFromMessage(Message message) {
-        Object content = message.getContent();
-        if (content == null) {
-            return "(无)";
-        }
-
-        // 如果是 List<ContentPart>，提取所有文本内容
-        if (content instanceof List) {
-            List<?> rawList = (List<?>) content;
-            StringBuilder textBuilder = new StringBuilder();
-            for (Object item : rawList) {
-                // 类型安全检查：确保每个元素是 ContentPart
-                if (item instanceof TextPart) {
-                    if (textBuilder.length() > 0) {
-                        textBuilder.append(" ");
-                    }
-                    textBuilder.append(((TextPart) item).getText());
-                } else if (item != null && !(item instanceof ContentPart)) {
-                    log.debug("Skipping non-ContentPart item in content list: {}",
-                            item.getClass().getName());
-                }
-            }
-            String fullText = textBuilder.toString();
-
-            // 截取前 200 字符作为高层意图
-            return fullText.length() > 200
-                    ? fullText.substring(0, 200) + "..."
-                    : fullText;
-        }
-
-        // 如果是 String，直接使用
-        String text = content.toString();
-        return text.length() > 200
-                ? text.substring(0, 200) + "..."
-                : text;
-    }
 }

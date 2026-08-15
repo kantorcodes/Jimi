@@ -30,7 +30,9 @@ public class HttpJsonRpcClient extends AbstractJsonRpcClient {
 
         WebClient.Builder builder = WebClient.builder()
                 .baseUrl(url)
-                .defaultHeader("Content-Type", "application/json");
+                .defaultHeader("Content-Type", "application/json")
+                // MCP Streamable HTTP 服务端（官方 TS SDK）要求该 Accept 头，否则返回 406
+                .defaultHeader("Accept", "application/json, text/event-stream");
 
         if (headers != null && !headers.isEmpty()) {
             headers.forEach(builder::defaultHeader);
@@ -58,10 +60,30 @@ public class HttpJsonRpcClient extends AbstractJsonRpcClient {
                 .retrieve()
                 .bodyToMono(JsonRpcMessage.Response.class)
                 .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
-                .doOnSuccess(response -> log.debug("Received HTTP MCP response: id={}", response.getId()))
+                // 服务端返回 202/空体时 response 为 null，需判空避免 NPE
+                .doOnSuccess(response -> log.debug("Received HTTP MCP response: id={}",
+                        response != null ? response.getId() : "<empty>"))
                 .doOnError(error -> log.error("HTTP MCP request failed: {}", error.getMessage()));
 
         return responseMono.block();
+    }
+
+    @Override
+    protected void sendNotification(String method, Map<String, Object> params) throws Exception {
+        JsonRpcMessage.Request notification = JsonRpcMessage.Request.builder()
+                .jsonrpc("2.0")
+                .method(method)
+                .params(params)
+                .build();
+
+        log.debug("Sending HTTP MCP notification: method={}", method);
+        // 通知无响应体，服务端通常返回 202 Accepted，忽略响应体即可
+        webClient.post()
+                .bodyValue(notification)
+                .retrieve()
+                .toBodilessEntity()
+                .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
+                .block();
     }
 
     @Override

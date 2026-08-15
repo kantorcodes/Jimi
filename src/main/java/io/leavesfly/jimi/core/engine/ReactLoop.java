@@ -180,9 +180,13 @@ public class ReactLoop {
 
     /**
      * 处理 LLM 错误
+     * <p>
+     * 错误必须向上层传播而非静默结束循环：吞掉错误会让 LLM 调用失败
+     * （网络异常、鉴权失败、响应体缺少 choices 等）时表现为"正常结束"，
+     * 用户既收不到回复也看不到任何报错。
      */
     private Mono<Boolean> handleLLMError(Throwable e) {
-        log.debug("LLM call failed: {}", e.getMessage());
-        return Mono.just(true);
+        log.error("LLM call failed", e);
+        return Mono.error(e);
     }
 }

@@ -12,8 +12,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * MCP 工具加载器 - Spring Service
@@ -33,8 +36,8 @@ import java.util.Map;
 public class MCPToolLoader {
     /** JSON序列化工具 */
     private final ObjectMapper objectMapper;
-    /** 活跃的客户端列表，用于统一管理和关闭 */
-    private final List<JsonRpcClient> activeClients = new ArrayList<>();
+    /** 活跃的客户端列表，用于统一管理和关闭（线程安全，避免运行时加载与 @PreDestroy 并发冲突） */
+    private final List<JsonRpcClient> activeClients = new CopyOnWriteArrayList<>();
 
     @Autowired
     public MCPToolLoader(ObjectMapper objectMapper) {
@@ -70,6 +73,8 @@ public class MCPToolLoader {
         if (config.getMcpServers() == null || config.getMcpServers().isEmpty()) {
             return loadedTools;
         }
+        // 记录已注册的工具名，检测跨 server 的重名冲突（ToolRegistry 同名会被静默覆盖）
+        Set<String> seenToolNames = new HashSet<>();
         // 遍历每个配置的MCP服务
         for (Map.Entry<String, MCPConfig.ServerConfig> entry : config.getMcpServers().entrySet()) {
             String serverName = entry.getKey();
@@ -82,9 +87,17 @@ public class MCPToolLoader {
                 client.initialize();
                 // 3. 获取工具列表
                 MCPSchema.ListToolsResult toolsResult = client.listTools();
-                List<MCPSchema.Tool> tools = toolsResult.getTools();
+                List<MCPSchema.Tool> tools = toolsResult != null ? toolsResult.getTools() : null;
+                if (tools == null || tools.isEmpty()) {
+                    log.warn("MCP server {} returned no tools, skip", serverName);
+                    continue;
+                }
                 // 4. 包装和注册每个工具
                 for (MCPSchema.Tool tool : tools) {
+                    if (!seenToolNames.add(tool.getName())) {
+                        log.warn("Duplicate MCP tool name '{}' from server '{}', it will override the previous registration",
+                                tool.getName(), serverName);
+                    }
                     MCPTool mcpTool = new MCPTool(tool, client);
                     toolRegistry.register(mcpTool);
                     loadedTools.add(mcpTool);

@@ -25,7 +25,8 @@ public class JsonRpcMessage {
     @AllArgsConstructor
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class Request {
-        /** JSON-RPC协议版本，固定为"2.0" */
+        /** JSON-RPC协议版本，固定为"2.0"（@Builder.Default 防止 Lombok 构建时忽略字段初始值） */
+        @Builder.Default
         @JsonProperty("jsonrpc")
         private String jsonrpc = "2.0";
         
@@ -52,7 +53,8 @@ public class JsonRpcMessage {
     @AllArgsConstructor
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class Response {
-        /** JSON-RPC协议版本 */
+        /** JSON-RPC协议版本（@Builder.Default 防止 Lombok 构建时忽略字段初始值） */
+        @Builder.Default
         @JsonProperty("jsonrpc")
         private String jsonrpc = "2.0";
         

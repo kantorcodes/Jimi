@@ -179,7 +179,7 @@ public class AgentExecutor {
         reactLoop.setOnAssistantMessage((message, acc) -> {
             if (acc.getUsage() != null) {
                 int newTokens = acc.getUsage().getTotalTokens();
-                context.updateTokenCount(context.getTokenCount() + newTokens).subscribe();
+                updateTokenCountAsync(context.getTokenCount() + newTokens);
                 wire.send(new TokenUsageMessage(acc.getUsage()));
                 DebugLogger.logLLMResponse(
                         message.getTextContent() != null ? message.getTextContent().length() : 0,
@@ -189,9 +189,19 @@ public class AgentExecutor {
                         acc.getUsage().getTotalTokens());
             } else {
                 int estimated = TokenCounter.estimateTokens(message);
-                context.updateTokenCount(context.getTokenCount() + estimated).subscribe();
+                updateTokenCountAsync(context.getTokenCount() + estimated);
             }
         });
+    }
+
+    /**
+     * 异步更新 Token 计数（不阻塞主流程，失败仅告警）
+     */
+    private void updateTokenCountAsync(int newCount) {
+        context.updateTokenCount(newCount)
+                .subscribe(
+                        unused -> {},
+                        error -> log.warn("Failed to persist token count", error));
     }
 
     // ==================== 生命周期回调 ====================

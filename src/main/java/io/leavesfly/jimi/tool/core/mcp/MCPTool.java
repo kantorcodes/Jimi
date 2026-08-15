@@ -9,9 +9,12 @@ import io.leavesfly.jimi.tool.AbstractTool;
 import io.leavesfly.jimi.tool.ToolResult;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 
 /**
  * MCP 工具包装器 - 轻量级本地实现
@@ -102,22 +105,33 @@ public class MCPTool extends AbstractTool<Map<String, Object>> {
     @Override
     public Mono<ToolResult> execute(Map<String, Object> params) {
         return Mono.fromCallable(() -> {
-            try {
-                // 调用MCP服务的工具
-                MCPSchema.CallToolResult result = mcpClient.callTool(
-                    mcpToolName,
-                    params != null ? params : new HashMap<>()
-                );
-                // 转换为Jimi的ToolResult格式
-                return MCPResultConverter.convert(result);
-            } catch (Exception e) {
-                log.error("Failed to execute MCP tool {}: {}", mcpToolName, e.getMessage());
-                return ToolResult.error(
-                    "Failed to execute MCP tool: " + e.getMessage(),
-                    "MCP tool execution failed"
-                );
-            }
-        });
+                    try {
+                        // 调用MCP服务的工具
+                        MCPSchema.CallToolResult result = mcpClient.callTool(
+                            mcpToolName,
+                            params != null ? params : new HashMap<>()
+                        );
+                        // 转换为Jimi的ToolResult格式
+                        return MCPResultConverter.convert(result);
+                    } catch (Exception e) {
+                        log.error("Failed to execute MCP tool {}: {}", mcpToolName, e.getMessage());
+                        return ToolResult.error(
+                            "Failed to execute MCP tool: " + e.getMessage(),
+                            "MCP tool execution failed"
+                        );
+                    }
+                })
+                // MCP 调用为阻塞式 I/O（stdio 等待 / http block），调度到弹性线程池避免阻塞引擎线程
+                .subscribeOn(Schedulers.boundedElastic())
+                // 超时控制真正生效：超过 timeoutSeconds 未完成则返回错误结果
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .onErrorResume(TimeoutException.class, e -> {
+                    log.error("MCP tool {} timed out after {}s", mcpToolName, timeoutSeconds);
+                    return Mono.just(ToolResult.error(
+                        "MCP tool timed out after " + timeoutSeconds + "s",
+                        "MCP tool execution timeout"
+                    ));
+                });
     }
 
     /**

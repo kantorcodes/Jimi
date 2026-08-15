@@ -106,8 +106,8 @@ public class SessionManager {
     private Metadata loadMetadata() {
         Path metadataPath = getMetadataPath();
         if (Files.exists(metadataPath)) {
-            try {
-                return objectMapper.readValue(Files.newInputStream(metadataPath), Metadata.class);
+            try (var in = Files.newInputStream(metadataPath)) {
+                return objectMapper.readValue(in, Metadata.class);
             } catch (IOException e) {
                 log.warn("Failed to load metadata, using empty metadata", e);
                 return new Metadata();

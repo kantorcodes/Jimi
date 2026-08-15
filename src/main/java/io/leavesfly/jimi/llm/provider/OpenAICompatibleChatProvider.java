@@ -355,8 +355,18 @@ public class OpenAICompatibleChatProvider implements ChatProvider {
     }
 
     private ChatCompletionResult parseResponse(JsonNode response) {
-        JsonNode choice = response.get("choices").get(0);
+        // 防御：部分网关/代理在异常时返回 200 + 错误体，缺少 choices 会导致 NPE
+        JsonNode choices = response.get("choices");
+        if (choices == null || !choices.isArray() || choices.isEmpty()) {
+            String errorInfo = response.has("error") ? response.get("error").toString() : response.toString();
+            throw new IllegalStateException(
+                    providerName + " response has no valid choices: " + errorInfo);
+        }
+        JsonNode choice = choices.get(0);
         JsonNode message = choice.get("message");
+        if (message == null || message.isNull()) {
+            throw new IllegalStateException(providerName + " response choice has no message");
+        }
 
         // 解析消息
         Message msg = parseMessage(message);
@@ -379,7 +389,7 @@ public class OpenAICompatibleChatProvider implements ChatProvider {
     }
 
     private Message parseMessage(JsonNode messageNode) {
-        String role = messageNode.get("role").asText();
+        String role = messageNode.has("role") ? messageNode.get("role").asText() : "assistant";
 
         // 处理推理内容（支持多种字段）和普通内容
         StringBuilder contentBuilder = new StringBuilder();

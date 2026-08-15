@@ -81,7 +81,8 @@ public class MCPResultConverter {
      */
     private static ContentPart convertContentPart(MCPSchema.Content content) {
         if (content instanceof MCPSchema.TextContent textContent) {
-            return TextPart.of(textContent.getText());
+            // 防御 null 文本，避免下游 ToolResult 输出为 null 引发 NPE
+            return TextPart.of(textContent.getText() != null ? textContent.getText() : "");
         } else if (content instanceof MCPSchema.ImageContent imageContent) {
             return convertImageContent(imageContent);
         } else if (content instanceof MCPSchema.EmbeddedResource embeddedResource) {
@@ -98,11 +99,15 @@ public class MCPResultConverter {
      * @return 图片ContentPart
      */
     private static ImagePart convertImageContent(MCPSchema.ImageContent imageContent) {
+        String data = imageContent.getData();
+        if (data == null || data.isEmpty()) {
+            // 无实际图片数据时不构造无效 Data URL
+            return null;
+        }
         String mimeType = imageContent.getMimeType();
         if (mimeType == null || mimeType.isEmpty()) {
             mimeType = "image/png";  // 默认MIME类型
         }
-        String data = imageContent.getData();
         // 构造Data URL: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...
         String dataUrl = String.format("data:%s;base64,%s", mimeType, data);
         return ImagePart.of(dataUrl);

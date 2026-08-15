@@ -217,7 +217,7 @@ public class WorktreeManager {
             for (String line : output.split("\n")) {
                 if (line.startsWith("worktree ")) {
                     currentDir = line.substring("worktree ".length());
-                } else if (line.startsWith("branch ")) {
+                } else if (line.startsWith("branch refs/heads/")) {
                     currentBranch = line.substring("branch refs/heads/".length());
                 } else if (line.isEmpty() && currentDir != null) {
                     result.add(new WorktreeInfo(currentBranch, Path.of(currentDir)));

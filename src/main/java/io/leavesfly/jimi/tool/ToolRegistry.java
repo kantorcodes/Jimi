@@ -249,7 +249,7 @@ public class ToolRegistry {
 
                 // 只有非 @Builder.Default 的字段才是必需的
                 // 简化处理：如果是基本类型且没有默认值注解，则为必需
-                if (!field.isAnnotationPresent(lombok.Builder.Default.class)) {
+                if (!hasBuilderDefault(paramsType, field.getName())) {
                     required.add(propName);
                 }
             }
@@ -261,6 +261,26 @@ public class ToolRegistry {
         }
 
         return parameters;
+    }
+
+    /**
+     * 判断字段是否由 Lombok @Builder.Default 提供初始值
+     * <p>
+     * @Builder.Default 是 SOURCE 保留注解，运行时反射读取永远为 false，
+     * 导致所有字段都被误标为 required。改为探测 Lombok 为该字段
+     * 生成的私有静态方法 {@code $default$<fieldName>()} 来判断。
+     *
+     * @param owner     字段所属类
+     * @param fieldName 字段名
+     * @return 是否存在 @Builder.Default 默认值
+     */
+    private static boolean hasBuilderDefault(Class<?> owner, String fieldName) {
+        try {
+            owner.getDeclaredMethod("$default$" + fieldName);
+            return true;
+        } catch (ReflectiveOperationException e) {
+            return false;
+        }
     }
 
     /**
@@ -412,7 +432,7 @@ public class ToolRegistry {
                 properties.set(fieldName, fieldSchema);
 
                 // 判断是否必填
-                if (!field.isAnnotationPresent(lombok.Builder.Default.class)) {
+                if (!hasBuilderDefault(type, field.getName())) {
                     required.add(fieldName);
                 }
             }

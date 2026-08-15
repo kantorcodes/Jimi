@@ -55,7 +55,6 @@ public class RateLimiter {
         
         // 检查是否超过限流
         if (requestTimestamps.size() >= maxRequests) {
-            long oldestRequest = requestTimestamps.peek();
             long waitTime = sleepMs;
             
             log.debug("Rate limit exceeded ({} requests in {}ms window), sleeping for {}ms", 

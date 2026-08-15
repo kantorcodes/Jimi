@@ -37,6 +37,16 @@ public abstract class AbstractJsonRpcClient implements JsonRpcClient {
      */
     protected abstract JsonRpcMessage.Response sendRequest(String method, Map<String, Object> params) throws Exception;
 
+    /**
+     * 发送 JSON-RPC 通知（无 id，不等待响应）
+     * 由子类实现具体的传输方式
+     *
+     * @param method JSON-RPC 方法名
+     * @param params 方法参数
+     * @throws Exception 发送失败时抛出
+     */
+    protected abstract void sendNotification(String method, Map<String, Object> params) throws Exception;
+
     @Override
     public MCPSchema.InitializeResult initialize() throws Exception {
         Map<String, Object> params = new HashMap<>();
@@ -49,8 +59,17 @@ public abstract class AbstractJsonRpcClient implements JsonRpcClient {
         if (response.getError() != null) {
             throw new RuntimeException("Initialize failed: " + response.getError().getMessage());
         }
+        if (response.getResult() == null) {
+            throw new RuntimeException("Initialize failed: empty result");
+        }
 
-        return objectMapper.convertValue(response.getResult(), MCPSchema.InitializeResult.class);
+        MCPSchema.InitializeResult initResult = objectMapper.convertValue(response.getResult(), MCPSchema.InitializeResult.class);
+
+        // MCP 协议要求：initialize 响应后必须发送 initialized 通知，
+        // 否则严格实现的服务端（官方 TS/Python SDK）会拒绝后续请求（error -32002）
+        sendNotification("notifications/initialized", Map.of());
+
+        return initResult;
     }
 
     @Override
@@ -59,6 +78,9 @@ public abstract class AbstractJsonRpcClient implements JsonRpcClient {
 
         if (response.getError() != null) {
             throw new RuntimeException("List tools failed: " + response.getError().getMessage());
+        }
+        if (response.getResult() == null) {
+            throw new RuntimeException("List tools failed: empty result");
         }
 
         return objectMapper.convertValue(response.getResult(), MCPSchema.ListToolsResult.class);
@@ -77,11 +99,21 @@ public abstract class AbstractJsonRpcClient implements JsonRpcClient {
         }
 
         Map<String, Object> result = response.getResult();
+        if (result == null) {
+            // 非正常响应（既无 result 也无 error），按空结果返回避免 NPE
+            log.warn("Call tool '{}' returned empty result", toolName);
+            return MCPSchema.CallToolResult.builder()
+                    .content(List.of())
+                    .isError(false)
+                    .build();
+        }
+
         List<MCPSchema.Content> contents = parseContents(result.get("content"));
 
         return MCPSchema.CallToolResult.builder()
                 .content(contents)
-                .isError((Boolean) result.get("isError"))
+                // 安全转换：非 Boolean 类型（如 0/1、字符串）按 false 处理，避免 ClassCastException
+                .isError(result.get("isError") instanceof Boolean b ? b : Boolean.FALSE)
                 .build();
     }
 
