@@ -94,6 +94,15 @@ public class AgentExecutor {
         return Mono.defer(() -> {
             // 1. 初始化
             executionState.initializeTask();
+
+            // 新任务开始时重置会话取消标志，避免上一次取消（如团队取消）
+            // 导致同一 session 内后续所有任务立即报 RunCancelledException。
+            // 仅主 Agent 入口重置：SubAgent 复用同一 session，若重置会吞掉
+            // 用户在主执行进行中刚发出的取消
+            if (!isSubagent) {
+                jimiRuntime.getSession().resetCancelled();
+            }
+
             String userInputText = extractUserInputText(userInput);
             Message userMessage = Message.user(userInput);
             int userInputTokens = TokenCounter.estimateTokens(userMessage);

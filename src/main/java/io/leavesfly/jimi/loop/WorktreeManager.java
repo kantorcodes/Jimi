@@ -8,15 +8,18 @@ import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -123,7 +126,8 @@ public class WorktreeManager {
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
-            String output = readProcessOutput(process);
+            // 异步读取输出，避免同步读取阻塞导致超时检查失效（参照 HookExecutor）
+            CompletableFuture<String> outputFuture = readStreamAsync(process.getInputStream());
             boolean completed = process.waitFor(30, TimeUnit.SECONDS);
 
             if (!completed) {
@@ -132,7 +136,7 @@ public class WorktreeManager {
             }
 
             if (process.exitValue() != 0) {
-                return MergeResult.failure("Merge conflict: " + output);
+                return MergeResult.failure("Merge conflict: " + outputFuture.get(5, TimeUnit.SECONDS));
             }
 
             return MergeResult.success("Merged " + branch + " into " + targetBranch);
@@ -182,17 +186,8 @@ public class WorktreeManager {
      * @return 当前分支名，失败时返回 null
      */
     public String getCurrentBranch(Path baseDir) {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("git", "rev-parse", "--abbrev-ref", "HEAD");
-            pb.directory(baseDir.toFile());
-            Process process = pb.start();
-            String output = readProcessOutput(process).trim();
-            process.waitFor(5, TimeUnit.SECONDS);
-            return output.isEmpty() ? null : output;
-        } catch (Exception e) {
-            log.debug("Failed to get current branch: {}", e.getMessage());
-            return null;
-        }
+        return readGitOutput(baseDir, "Failed to get current branch",
+                "git", "rev-parse", "--abbrev-ref", "HEAD");
     }
 
     /**
@@ -208,8 +203,14 @@ public class WorktreeManager {
             pb.directory(baseDir.toFile());
             Process process = pb.start();
 
-            String output = readProcessOutput(process);
-            process.waitFor(10, TimeUnit.SECONDS);
+            CompletableFuture<String> outputFuture = readStreamAsync(process.getInputStream());
+            boolean completed = process.waitFor(10, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                log.warn("git worktree list timed out in: {}", baseDir);
+                return result;
+            }
+            String output = outputFuture.get(5, TimeUnit.SECONDS);
 
             // 解析 porcelain 输出
             String currentDir = null;
@@ -255,15 +256,29 @@ public class WorktreeManager {
      * @return 分支名，失败时返回 null
      */
     public String getBranchName(Path worktreeDir) {
+        return readGitOutput(worktreeDir, "Failed to get worktree branch",
+                "git", "rev-parse", "--abbrev-ref", "HEAD");
+    }
+
+    /**
+     * 执行只读 git 命令并限时读取输出，超时或失败时返回 null
+     */
+    private String readGitOutput(Path workDir, String errorDesc, String... command) {
         try {
-            ProcessBuilder pb = new ProcessBuilder("git", "rev-parse", "--abbrev-ref", "HEAD");
-            pb.directory(worktreeDir.toFile());
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.directory(workDir.toFile());
             Process process = pb.start();
-            String output = readProcessOutput(process).trim();
-            process.waitFor(5, TimeUnit.SECONDS);
+            CompletableFuture<String> outputFuture = readStreamAsync(process.getInputStream());
+            boolean completed = process.waitFor(5, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                log.debug("{}: command timed out", errorDesc);
+                return null;
+            }
+            String output = outputFuture.get(5, TimeUnit.SECONDS).trim();
             return output.isEmpty() ? null : output;
         } catch (Exception e) {
-            log.debug("Failed to get worktree branch: {}", e.getMessage());
+            log.debug("{}: {}", errorDesc, e.getMessage());
             return null;
         }
     }
@@ -274,12 +289,14 @@ public class WorktreeManager {
             pb.directory(workDir.toFile());
             pb.redirectErrorStream(true);
             Process process = pb.start();
-            readProcessOutput(process); // 消耗输出防止阻塞
+            // 异步消耗输出防止管道填满导致阻塞，同时保证超时检查能真正执行
+            CompletableFuture<String> outputFuture = readStreamAsync(process.getInputStream());
             boolean completed = process.waitFor(30, TimeUnit.SECONDS);
             if (!completed) {
                 process.destroyForcibly();
                 return -1;
             }
+            outputFuture.get(5, TimeUnit.SECONDS);
             return process.exitValue();
         } catch (Exception e) {
             log.error("Git command failed: {}", String.join(" ", command), e);
@@ -287,8 +304,16 @@ public class WorktreeManager {
         }
     }
 
-    private String readProcessOutput(Process process) {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+    /**
+     * 在独立线程中异步读取进程流，避免同步读取导致超时机制失效
+     */
+    private CompletableFuture<String> readStreamAsync(InputStream inputStream) {
+        return CompletableFuture.supplyAsync(
+                () -> readStream(inputStream), Schedulers.boundedElastic()::schedule);
+    }
+
+    private String readStream(InputStream inputStream) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
             return reader.lines().collect(Collectors.joining("\n"));
         } catch (IOException e) {
             return "";

@@ -39,7 +39,6 @@ public class OpenAICompatibleChatProvider implements ChatProvider {
     private final ObjectMapper objectMapper;
     private final String providerName;
     private final RateLimiter rateLimiter;  // 限流器
-    private final StreamResponseProcessor streamProcessor;  // 流式响应处理器
 
     public OpenAICompatibleChatProvider(
             String modelName,
@@ -82,9 +81,6 @@ public class OpenAICompatibleChatProvider implements ChatProvider {
         }
 
         this.webClient = builder.build();
-
-        // 初始化流式响应处理器
-        this.streamProcessor = new StreamResponseProcessor(objectMapper, providerName);
 
         log.info("Created {} ChatProvider: model={}, baseUrl={}",
                 providerName, modelName, providerConfig.getBaseUrl());
@@ -168,8 +164,10 @@ public class OpenAICompatibleChatProvider implements ChatProvider {
                 // 应用限流
                 applyRateLimit();
 
-                // 重置流式处理状态(每次新请求都重置)
-                streamProcessor.reset();
+                // 每次请求创建独立的流式处理器，避免并发流式请求间状态互相污染
+                // （主 Agent、SubAgent、Teammate 可能共享同一 provider 实例）
+                StreamResponseProcessor streamProcessor =
+                        new StreamResponseProcessor(objectMapper, providerName);
 
                 ObjectNode requestBody = buildRequestBody(systemPrompt, history, tools, true);
 
@@ -424,12 +422,19 @@ public class OpenAICompatibleChatProvider implements ChatProvider {
         if (messageNode.has("tool_calls")) {
             toolCalls = new ArrayList<>();
             for (JsonNode tc : messageNode.get("tool_calls")) {
+                // 防御：部分 OpenAI 兼容 provider 可能省略 id/function 字段，用 path() 避免 NPE
+                JsonNode functionNode = tc.path("function");
+                String functionName = functionNode.path("name").asText(null);
+                if (functionName == null || functionName.isEmpty()) {
+                    log.warn("Skipping tool_call without valid function name: {}", tc);
+                    continue;
+                }
                 ToolCall toolCall = ToolCall.builder()
-                        .id(tc.get("id").asText())
-                        .type(tc.has("type") ? tc.get("type").asText() : "function")
+                        .id(tc.path("id").asText("call_" + toolCalls.size()))
+                        .type(tc.path("type").asText("function"))
                         .function(FunctionCall.builder()
-                                .name(tc.get("function").get("name").asText())
-                                .arguments(tc.get("function").get("arguments").asText())
+                                .name(functionName)
+                                .arguments(functionNode.path("arguments").asText(""))
                                 .build())
                         .build();
                 toolCalls.add(toolCall);

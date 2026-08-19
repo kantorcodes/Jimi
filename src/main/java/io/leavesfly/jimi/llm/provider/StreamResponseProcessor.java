@@ -9,6 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * 流式响应处理器
  * 负责解析 OpenAI 兼容 API 的流式响应（SSE）
+ * <p>
+ * 每个流式请求独立创建一个实例，不跨请求复用，避免共享可变状态。
  */
 @Slf4j
 public class StreamResponseProcessor {
@@ -24,15 +26,6 @@ public class StreamResponseProcessor {
         this.objectMapper = objectMapper;
         this.providerName = providerName;
         this.thinkTagParser = new ThinkTagParser();
-    }
-
-    /**
-     * 重置处理器状态
-     * 每次新请求前调用
-     */
-    public void reset() {
-        thinkTagParser.reset();
-        apiErrorOccurred = false;
     }
 
     /**

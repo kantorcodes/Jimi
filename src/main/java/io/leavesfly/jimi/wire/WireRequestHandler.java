@@ -27,7 +27,8 @@ import java.util.concurrent.Semaphore;
  * 在 Engine 侧订阅 Wire 上行请求流，根据请求类型分发到对应的处理逻辑，
  * 处理完成后通过 WireRequest 内置的 Sink 回写响应。
  * <p>
- * 生命周期由 JimiEngine 管理，在 Engine 创建时注册，reset 时重新订阅。
+ * 生命周期由 JimiEngine 管理，在 Engine 创建时注册一次；Wire 的 Sink 在整个
+ * 生命周期内保持不变，reset 时无需重新订阅。
  */
 @Slf4j
 public class WireRequestHandler {

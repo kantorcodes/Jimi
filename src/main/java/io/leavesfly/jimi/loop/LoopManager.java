@@ -338,8 +338,12 @@ public class LoopManager {
             if (interval == null) {
                 return null;
             }
-            long elapsed = Instant.now().toEpochMilli() - startTime.toEpochMilli();
             long intervalMs = interval.toMillis();
+            if (intervalMs <= 0) {
+                // 零/亚毫秒间隔无法计算下次执行时间，避免除零异常
+                return Instant.now();
+            }
+            long elapsed = Instant.now().toEpochMilli() - startTime.toEpochMilli();
             long nextMs = ((elapsed / intervalMs) + 1) * intervalMs;
             return startTime.plusMillis(nextMs);
         }

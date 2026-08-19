@@ -4,11 +4,14 @@ import io.leavesfly.jimi.config.info.LoopEngineeringConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -56,7 +59,10 @@ public class CommandVerifier {
         try {
             long start = System.currentTimeMillis();
             Process process = pb.start();
-            String output = readProcessOutput(process);
+
+            // 异步读取输出：同步读取会在进程持续输出或挂起时无限阻塞，
+            // 导致后续的 waitFor 超时检查永远执行不到（参照 HookExecutor）
+            CompletableFuture<String> outputFuture = readStreamAsync(process.getInputStream());
 
             boolean completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!completed) {
@@ -68,6 +74,8 @@ public class CommandVerifier {
 
             int exitCode = process.exitValue();
             long elapsedMs = System.currentTimeMillis() - start;
+            // 进程已退出，流已到 EOF，输出读取应在极短时间内完成
+            String output = outputFuture.get(5, TimeUnit.SECONDS);
             String tail = tail(output);
 
             if (exitCode == 0) {
@@ -86,11 +94,22 @@ public class CommandVerifier {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return GoalVerification.notSatisfied("验证命令被中断");
+        } catch (Exception e) {
+            log.error("Failed to read verify command output: {}", command, e);
+            return GoalVerification.notSatisfied("验证命令输出读取失败: " + e.getMessage());
         }
     }
 
-    private String readProcessOutput(Process process) {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+    /**
+     * 在独立线程中异步读取进程流，避免同步读取导致超时机制失效
+     */
+    private CompletableFuture<String> readStreamAsync(InputStream inputStream) {
+        return CompletableFuture.supplyAsync(
+                () -> readStream(inputStream), Schedulers.boundedElastic()::schedule);
+    }
+
+    private String readStream(InputStream inputStream) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
             return reader.lines().collect(Collectors.joining("\n"));
         } catch (IOException e) {
             return "";

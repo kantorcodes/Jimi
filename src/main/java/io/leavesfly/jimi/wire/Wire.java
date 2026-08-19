@@ -52,7 +52,9 @@ public interface Wire {
     void complete();
 
     /**
-     * 重置 Wire，创建新的 Sink 以支持多次执行
+     * 重置 Wire 会话状态以支持多次执行
+     * <p>
+     * 注意：实现不得替换底层 Sink，否则已建立的订阅会绑定旧 Sink 导致通道失联
      */
     void reset();
 }

@@ -128,10 +128,16 @@ public class MemoryStore {
      * 读取指定 Topic 文件
      *
      * @param topicName 主题名称（不含 .md 后缀）
-     * @return 主题文件内容，如果不存在则返回空字符串
+     * @return 主题文件内容，如果不存在或名称非法则返回空字符串
      */
     public String readTopic(String topicName) {
-        Path topicFile = memoryRoot.resolve(TOPICS_DIR).resolve(topicName + ".md");
+        Path topicFile;
+        try {
+            topicFile = resolveTopicFile(topicName);
+        } catch (IllegalArgumentException e) {
+            log.warn("Rejected invalid topic name for read: {}", topicName);
+            return "";
+        }
         if (!Files.isRegularFile(topicFile)) {
             return "";
         }
@@ -148,9 +154,10 @@ public class MemoryStore {
      *
      * @param topicName 主题名称（不含 .md 后缀）
      * @param content   主题内容
+     * @throws IllegalArgumentException topicName 非法（如含路径穿越）时抛出
      */
     public void writeTopic(String topicName, String content) {
-        Path topicFile = memoryRoot.resolve(TOPICS_DIR).resolve(topicName + ".md");
+        Path topicFile = resolveTopicFile(topicName);
         try {
             Files.createDirectories(topicFile.getParent());
             Files.writeString(topicFile, content);
@@ -158,6 +165,28 @@ public class MemoryStore {
         } catch (IOException e) {
             log.error("Failed to write topic file: {}", topicFile, e);
         }
+    }
+
+    /**
+     * 解析并校验 Topic 文件路径
+     * <p>
+     * topic_name 可能来自 LLM 输出，必须防止路径穿越（如 "../../etc/passwd"）
+     * 导致读写 topics 目录之外的任意文件。
+     *
+     * @param topicName 主题名称（不含 .md 后缀）
+     * @return 校验通过的 topic 文件路径
+     * @throws IllegalArgumentException 名称为空或穿越出 topics 目录时抛出
+     */
+    private Path resolveTopicFile(String topicName) {
+        if (topicName == null || topicName.isBlank()) {
+            throw new IllegalArgumentException("Topic name must not be blank");
+        }
+        Path topicsDir = memoryRoot.resolve(TOPICS_DIR).normalize();
+        Path topicFile = topicsDir.resolve(topicName + ".md").normalize();
+        if (!topicFile.startsWith(topicsDir)) {
+            throw new IllegalArgumentException("Invalid topic name (path traversal rejected): " + topicName);
+        }
+        return topicFile;
     }
 
     /**

@@ -6,21 +6,14 @@ import io.leavesfly.jimi.llm.ChatCompletionChunk;
  * Think 标签解析器
  * 处理流式响应中的 <think> 和 </think> 标签
  * 用于识别和标记 AI 的推理/思考内容
+ * <p>
+ * 每个流式请求独立创建一个实例，不跨请求复用。
  */
 public class ThinkTagParser {
 
     // <think>标签解析状态（流式处理）- 保留 volatile 修复
     private volatile boolean insideThinkTag = false;
     private volatile StringBuilder thinkTagBuffer = new StringBuilder();
-
-    /**
-     * 重置解析器状态
-     * 每次新请求前调用
-     */
-    public void reset() {
-        insideThinkTag = false;
-        thinkTagBuffer = new StringBuilder();
-    }
 
     /**
      * 解析内容中的 <think> 标签
