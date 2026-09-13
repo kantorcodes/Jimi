@@ -58,7 +58,7 @@ execution:
             break
 
     if payload is None:
-        print("unknown")
+        print("deny")
         raise SystemExit
 
     classification = payload.get("classification")
@@ -67,7 +67,7 @@ execution:
         and classification.get("explicitly_benign") is True
     )
     action = str(payload.get("minimum_action") or "unknown").strip().lower()
-    print("allow" if explicitly_benign and action == "allow" else action)
+    print("allow" if explicitly_benign and action == "allow" else "deny")
     PY
     )
 
