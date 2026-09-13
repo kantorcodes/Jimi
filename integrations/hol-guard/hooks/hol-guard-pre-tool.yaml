@@ -1,0 +1,60 @@
+name: hol-guard-pre-tool
+description: HOL_GUARD_PRE_TOOL_USE
+enabled: true
+priority: 100
+
+trigger:
+  type: PRE_TOOL_USE
+
+execution:
+  type: script
+  async: false
+  timeout: 10
+  script: |
+    set -u
+    INPUT=$(cat)
+    STDOUT_FILE=$(mktemp)
+    STDERR_FILE=$(mktemp)
+    trap 'rm -f "$STDOUT_FILE" "$STDERR_FILE"' EXIT
+
+    if ! printf '%s' "$INPUT" | hol-guard hook --harness jimi --json >"$STDOUT_FILE" 2>"$STDERR_FILE"; then
+      cat "$STDERR_FILE" >&2
+      exit 2
+    fi
+
+    DECISION=$(python3 - "$STDOUT_FILE" <<'PY'
+    import json
+    import sys
+
+    lines = [line.strip() for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+    payload = None
+    for line in reversed(lines):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            payload = value
+            break
+
+    if payload is None:
+        print("unknown")
+        raise SystemExit
+
+    hook = payload.get("hookSpecificOutput") or {}
+    decision = hook.get("permissionDecision") or payload.get("decision") or payload.get("policy_action")
+    print(str(decision or "unknown").strip().lower())
+    PY
+    )
+
+    case "$DECISION" in
+      allow|warn) exit 0 ;;
+      deny|block|ask|review|require-reapproval|sandbox-required)
+        cat "$STDOUT_FILE" >&2
+        exit 2
+        ;;
+      *)
+        echo "HOL Guard returned no recognized decision." >&2
+        exit 2
+        ;;
+    esac
