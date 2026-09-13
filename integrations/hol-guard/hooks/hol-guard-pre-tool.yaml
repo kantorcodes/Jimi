@@ -61,19 +61,20 @@ execution:
         print("unknown")
         raise SystemExit
 
-    action = payload.get("minimum_action")
-    print(str(action or "unknown").strip().lower())
+    classification = payload.get("classification")
+    explicitly_benign = (
+        isinstance(classification, dict)
+        and classification.get("explicitly_benign") is True
+    )
+    action = str(payload.get("minimum_action") or "unknown").strip().lower()
+    print("allow" if explicitly_benign and action == "allow" else action)
     PY
     )
 
     case "$MINIMUM_ACTION" in
-      allow|monitor) exit 0 ;;
-      review|block)
-        cat "$STDOUT_FILE" >&2
-        exit 2
-        ;;
+      allow) exit 0 ;;
       *)
-        echo "HOL_GUARD_DECISION_UNAVAILABLE" >&2
+        cat "$STDOUT_FILE" >&2
         exit 2
         ;;
     esac
