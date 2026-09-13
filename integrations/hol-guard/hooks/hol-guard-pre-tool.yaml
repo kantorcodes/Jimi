@@ -5,6 +5,8 @@ priority: 100
 
 trigger:
   type: PRE_TOOL_USE
+  tools:
+    - BashTool
 
 execution:
   type: script
@@ -13,16 +15,34 @@ execution:
   script: |
     set -u
     INPUT=$(cat)
+    COMMAND_FILE=$(mktemp)
     STDOUT_FILE=$(mktemp)
     STDERR_FILE=$(mktemp)
-    trap 'rm -f "$STDOUT_FILE" "$STDERR_FILE"' EXIT
+    trap 'rm -f "$COMMAND_FILE" "$STDOUT_FILE" "$STDERR_FILE"' EXIT
 
-    if ! printf '%s' "$INPUT" | hol-guard hook --harness jimi --json >"$STDOUT_FILE" 2>"$STDERR_FILE"; then
+    if ! printf '%s' "$INPUT" | python3 -c '
+    import json
+    import sys
+
+    payload = json.load(sys.stdin)
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        raise SystemExit(2)
+    command = tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        raise SystemExit(2)
+    sys.stdout.write(command)
+    ' >"$COMMAND_FILE"; then
+      exit 2
+    fi
+
+    COMMAND=$(cat "$COMMAND_FILE")
+    if ! hol-guard command test "$COMMAND" --json >"$STDOUT_FILE" 2>"$STDERR_FILE"; then
       cat "$STDERR_FILE" >&2
       exit 2
     fi
 
-    DECISION=$(python3 - "$STDOUT_FILE" <<'PY'
+    MINIMUM_ACTION=$(python3 - "$STDOUT_FILE" <<'PY'
     import json
     import sys
 
@@ -41,20 +61,19 @@ execution:
         print("unknown")
         raise SystemExit
 
-    hook = payload.get("hookSpecificOutput") or {}
-    decision = hook.get("permissionDecision") or payload.get("decision") or payload.get("policy_action")
-    print(str(decision or "unknown").strip().lower())
+    action = payload.get("minimum_action")
+    print(str(action or "unknown").strip().lower())
     PY
     )
 
-    case "$DECISION" in
-      allow|warn) exit 0 ;;
-      deny|block|ask|review|require-reapproval|sandbox-required)
+    case "$MINIMUM_ACTION" in
+      allow) exit 0 ;;
+      warn|review|require-reapproval|sandbox-required|block)
         cat "$STDOUT_FILE" >&2
         exit 2
         ;;
       *)
-        echo "HOL Guard returned no recognized decision." >&2
+        echo "HOL_GUARD_DECISION_UNAVAILABLE" >&2
         exit 2
         ;;
     esac
