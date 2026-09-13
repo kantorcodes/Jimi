@@ -67,8 +67,8 @@ execution:
     )
 
     case "$MINIMUM_ACTION" in
-      allow) exit 0 ;;
-      warn|review|require-reapproval|sandbox-required|block)
+      allow|monitor) exit 0 ;;
+      review|block)
         cat "$STDOUT_FILE" >&2
         exit 2
         ;;
