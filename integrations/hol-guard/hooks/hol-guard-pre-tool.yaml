@@ -37,7 +37,7 @@ execution:
     fi
 
     COMMAND=$(cat "$COMMAND_FILE")
-    if ! hol-guard command test "$COMMAND" --json >"$STDOUT_FILE" 2>"$STDERR_FILE"; then
+    if ! hol-guard command test --json -- "$COMMAND" >"$STDOUT_FILE" 2>"$STDERR_FILE"; then
       cat "$STDERR_FILE" >&2
       exit 2
     fi
