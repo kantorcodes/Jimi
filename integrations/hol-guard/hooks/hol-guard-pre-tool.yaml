@@ -36,7 +36,9 @@ execution:
       exit 2
     fi
 
-    COMMAND=$(cat "$COMMAND_FILE")
+    # Append a sentinel so command substitution preserves trailing newlines.
+    COMMAND=$(cat "$COMMAND_FILE"; printf ".")
+    COMMAND=${COMMAND%.}
     if ! hol-guard command test --json -- "$COMMAND" >"$STDOUT_FILE" 2>"$STDERR_FILE"; then
       cat "$STDERR_FILE" >&2
       exit 2
