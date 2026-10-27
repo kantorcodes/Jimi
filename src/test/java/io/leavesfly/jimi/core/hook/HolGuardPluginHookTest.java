@@ -1,5 +1,6 @@
 package io.leavesfly.jimi.core.hook;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,6 +31,10 @@ class HolGuardPluginHookTest {
 
         assertEquals(0, runHook(script, binDir, "explicit-allow",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        String multilineCommand = new ObjectMapper().writeValueAsString(Map.of(
+                "hook_event_name", "PRE_TOOL_USE", "tool_name", "BashTool",
+                "tool_input", Map.of("command", "git status\n")));
+        assertEquals(0, runHook(script, binDir, "preserve-newline", multilineCommand));
         assertEquals(2, runHook(script, binDir, "implicit-allow",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "review",
@@ -58,6 +63,15 @@ class HolGuardPluginHookTest {
                 #!/bin/sh
                 case \"$HOL_GUARD_FIXTURE\" in
                   explicit-allow)
+                    printf '%s\\n' '{\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  preserve-newline)
+                    EXPECTED=$(printf 'git status\\n.')
+                    EXPECTED=${EXPECTED%.}
+                    if [ "$5" != "$EXPECTED" ]; then
+                      exit 1
+                    fi
                     printf '%s\\n' '{\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
                     exit 0
                     ;;
