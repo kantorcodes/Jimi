@@ -70,7 +70,7 @@ execution:
     )
     action = str(payload.get("minimum_action") or "unknown").strip().lower()
     decision = payload.get("decision")
-    explicit_stop = payload.get("continue") is False
+    explicit_stop = "continue" in payload and payload["continue"] is not True
     conflicting_decision = decision is not None and (
         not isinstance(decision, str) or decision.strip().lower() != "allow"
     )
