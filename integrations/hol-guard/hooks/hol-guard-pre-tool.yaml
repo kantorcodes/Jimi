@@ -74,10 +74,17 @@ execution:
     conflicting_decision = decision is not None and (
         not isinstance(decision, str) or decision.strip().lower() != "allow"
     )
-    # An explicit Guard stop always overrides a benign classifier result.
+    # Optional hook-level decisions cannot override an explicit Guard stop.
+    policy_action = payload.get("policy_action")
+    conflicting_policy = policy_action is not None and policy_action != "allow"
+    hook = payload.get("hookSpecificOutput")
+    conflicting_hook = hook is not None and (
+        not isinstance(hook, dict) or hook.get("permissionDecision") != "allow"
+    )
     print(
         "allow" if explicitly_benign and action == "allow"
-        and not explicit_stop and not conflicting_decision else "deny"
+        and not explicit_stop and not conflicting_decision
+        and not conflicting_policy and not conflicting_hook else "deny"
     )
     PY
     )
