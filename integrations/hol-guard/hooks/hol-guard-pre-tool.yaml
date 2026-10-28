@@ -83,9 +83,9 @@ execution:
     )
     # Optional hook-level decisions cannot override an explicit Guard stop.
     policy_action = payload.get("policy_action")
-    conflicting_policy = policy_action is not None and policy_action not in {"allow", "not_run"}
+    conflicting_policy = "policy_action" in payload and policy_action not in {"allow", "not_run"}
     hook = payload.get("hookSpecificOutput")
-    conflicting_hook = hook is not None and (
+    conflicting_hook = "hookSpecificOutput" in payload and (
         not isinstance(hook, dict)
         or hook.get("permissionDecision") != "allow"
         or hook.get("hookEventName") != "PreToolUse"
