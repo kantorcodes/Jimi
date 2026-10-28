@@ -41,6 +41,8 @@ class HolGuardPluginHookTest {
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "continue-false",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(2, runHook(script, binDir, "continue-malformed",
+                "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "review",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"rm -rf ./build\"}}"));
         assertEquals(2, runHook(script, binDir, "malformed",
@@ -89,6 +91,10 @@ class HolGuardPluginHookTest {
                     ;;
                   continue-false)
                     printf '%s\\n' '{\"continue\":false,\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  continue-malformed)
+                    printf '%s\\n' '{\"continue\":\"false\",\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
                     exit 0
                     ;;
                   review)
