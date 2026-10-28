@@ -69,7 +69,16 @@ execution:
         and classification.get("explicitly_benign") is True
     )
     action = str(payload.get("minimum_action") or "unknown").strip().lower()
-    print("allow" if explicitly_benign and action == "allow" else "deny")
+    decision = payload.get("decision")
+    explicit_stop = payload.get("continue") is False
+    conflicting_decision = decision is not None and (
+        not isinstance(decision, str) or decision.strip().lower() != "allow"
+    )
+    # An explicit Guard stop always overrides a benign classifier result.
+    print(
+        "allow" if explicitly_benign and action == "allow"
+        and not explicit_stop and not conflicting_decision else "deny"
+    )
     PY
     )
 
