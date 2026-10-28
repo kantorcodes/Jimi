@@ -55,6 +55,10 @@ class HolGuardPluginHookTest {
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(0, runHook(script, binDir, "diagnostic-single",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(2, runHook(script, binDir, "null-policy-envelope",
+                "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(2, runHook(script, binDir, "null-hook-envelope",
+                "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "review",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"rm -rf ./build\"}}"));
         assertEquals(2, runHook(script, binDir, "malformed",
@@ -133,6 +137,14 @@ class HolGuardPluginHookTest {
                   diagnostic-single)
                     printf '%s\\n' 'diagnostic message'
                     printf '%s\\n' '{\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  null-policy-envelope)
+                    printf '%s\\n' '{\"policy_action\":null,\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  null-hook-envelope)
+                    printf '%s\\n' '{\"hookSpecificOutput\":null,\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
                     exit 0
                     ;;
                   review)
