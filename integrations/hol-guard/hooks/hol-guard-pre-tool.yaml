@@ -78,7 +78,7 @@ execution:
     action = str(payload.get("minimum_action") or "unknown").strip().lower()
     decision = payload.get("decision")
     explicit_stop = "continue" in payload and payload["continue"] is not True
-    conflicting_decision = decision is not None and (
+    conflicting_decision = "decision" in payload and (
         not isinstance(decision, str) or decision.strip().lower() != "allow"
     )
     # Optional hook-level decisions cannot override an explicit Guard stop.
