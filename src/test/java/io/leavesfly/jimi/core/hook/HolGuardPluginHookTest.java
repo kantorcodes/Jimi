@@ -47,6 +47,14 @@ class HolGuardPluginHookTest {
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "continue-malformed",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(0, runHook(script, binDir, "inspection-not-run",
+                "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(2, runHook(script, binDir, "wrong-hook-event",
+                "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(2, runHook(script, binDir, "conflicting-verdicts",
+                "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(0, runHook(script, binDir, "diagnostic-single",
+                "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "review",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"rm -rf ./build\"}}"));
         assertEquals(2, runHook(script, binDir, "malformed",
@@ -107,6 +115,24 @@ class HolGuardPluginHookTest {
                     ;;
                   continue-malformed)
                     printf '%s\\n' '{\"continue\":\"false\",\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  inspection-not-run)
+                    printf '%s\\n' '{\"policy_action\":\"not_run\",\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  wrong-hook-event)
+                    printf '%s\\n' '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"permissionDecision\":\"allow\"},\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  conflicting-verdicts)
+                    printf '%s\\n' '{\"minimum_action\":\"review\",\"classification\":{\"explicitly_benign\":false}}'
+                    printf '%s\\n' '{\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  diagnostic-single)
+                    printf '%s\\n' 'diagnostic message'
+                    printf '%s\\n' '{\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
                     exit 0
                     ;;
                   review)
