@@ -39,6 +39,10 @@ class HolGuardPluginHookTest {
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "decision-deny",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(2, runHook(script, binDir, "policy-block",
+                "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(2, runHook(script, binDir, "hook-deny",
+                "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "continue-false",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "continue-malformed",
@@ -87,6 +91,14 @@ class HolGuardPluginHookTest {
                     ;;
                   decision-deny)
                     printf '%s\\n' '{\"decision\":\"deny\",\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  policy-block)
+                    printf '%s\\n' '{\"policy_action\":\"block\",\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  hook-deny)
+                    printf '%s\\n' '{\"hookSpecificOutput\":{\"permissionDecision\":\"deny\"},\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
                     exit 0
                     ;;
                   continue-false)
