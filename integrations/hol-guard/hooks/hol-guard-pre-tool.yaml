@@ -54,18 +54,19 @@ execution:
         # A complete JSON document can be pretty-printed across many lines.
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        # Keep the existing single-line fallback for diagnostic-prefixed output.
-        payload = None
-        for line in reversed(raw.splitlines()):
+        # Permit diagnostics only with exactly one structured verdict.
+        # A later echoed allow must not override an earlier deny.
+        verdicts = []
+        for line in raw.splitlines():
             try:
                 candidate = json.loads(line.strip())
             except json.JSONDecodeError:
                 continue
             if isinstance(candidate, dict):
-                payload = candidate
-                break
+                verdicts.append(candidate)
+        payload = verdicts[0] if len(verdicts) == 1 else None
 
-    if payload is None:
+    if not isinstance(payload, dict):
         print("deny")
         raise SystemExit
 
@@ -82,10 +83,12 @@ execution:
     )
     # Optional hook-level decisions cannot override an explicit Guard stop.
     policy_action = payload.get("policy_action")
-    conflicting_policy = policy_action is not None and policy_action != "allow"
+    conflicting_policy = policy_action is not None and policy_action not in {"allow", "not_run"}
     hook = payload.get("hookSpecificOutput")
     conflicting_hook = hook is not None and (
-        not isinstance(hook, dict) or hook.get("permissionDecision") != "allow"
+        not isinstance(hook, dict)
+        or hook.get("permissionDecision") != "allow"
+        or hook.get("hookEventName") != "PreToolUse"
     )
     print(
         "allow" if explicitly_benign and action == "allow"
