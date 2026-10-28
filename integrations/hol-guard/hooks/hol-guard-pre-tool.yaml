@@ -48,16 +48,22 @@ execution:
     import json
     import sys
 
-    lines = [line.strip() for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
-    payload = None
-    for line in reversed(lines):
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            payload = value
-            break
+    with open(sys.argv[1], encoding="utf-8") as response_file:
+        raw = response_file.read().strip()
+    try:
+        # A complete JSON document can be pretty-printed across many lines.
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        # Keep the existing single-line fallback for diagnostic-prefixed output.
+        payload = None
+        for line in reversed(raw.splitlines()):
+            try:
+                candidate = json.loads(line.strip())
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict):
+                payload = candidate
+                break
 
     if payload is None:
         print("deny")
