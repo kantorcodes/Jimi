@@ -39,6 +39,8 @@ class HolGuardPluginHookTest {
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "decision-deny",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(2, runHook(script, binDir, "null-decision-envelope",
+                "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "policy-block",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "hook-deny",
@@ -103,6 +105,10 @@ class HolGuardPluginHookTest {
                     ;;
                   decision-deny)
                     printf '%s\\n' '{\"decision\":\"deny\",\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  null-decision-envelope)
+                    printf '%s\\n' '{\"decision\":null,\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
                     exit 0
                     ;;
                   policy-block)
