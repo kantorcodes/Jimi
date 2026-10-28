@@ -51,20 +51,11 @@ execution:
     with open(sys.argv[1], encoding="utf-8") as response_file:
         raw = response_file.read().strip()
     try:
-        # A complete JSON document can be pretty-printed across many lines.
+        # Only one complete JSON document can authorize a protected tool.
+        # Diagnostics or a second verdict on stdout must fail closed.
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        # Permit diagnostics only with exactly one structured verdict.
-        # A later echoed allow must not override an earlier deny.
-        verdicts = []
-        for line in raw.splitlines():
-            try:
-                candidate = json.loads(line.strip())
-            except json.JSONDecodeError:
-                continue
-            if isinstance(candidate, dict):
-                verdicts.append(candidate)
-        payload = verdicts[0] if len(verdicts) == 1 else None
+        payload = None
 
     if not isinstance(payload, dict):
         print("deny")
