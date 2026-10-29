@@ -15,13 +15,13 @@ execution:
   timeout: 10
   script: |
     set -u
-    INPUT=$(cat)
+    # Read stdin directly: Bash command substitution silently drops raw NULs.
     COMMAND_FILE=$(mktemp)
     STDOUT_FILE=$(mktemp)
     STDERR_FILE=$(mktemp)
     trap 'rm -f "$COMMAND_FILE" "$STDOUT_FILE" "$STDERR_FILE"' EXIT
 
-    if ! printf '%s' "$INPUT" | python3 -c '
+    if ! python3 -c '
     import json
     import sys
 
