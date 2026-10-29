@@ -50,6 +50,13 @@ execution:
     # Append a sentinel so command substitution preserves trailing newlines.
     COMMAND=$(cat "$COMMAND_FILE"; printf ".")
     COMMAND=${COMMAND%.}
+    # BashTool executes from the JVM process directory, while hook scripts
+    # normally start from HookContext.workDir. Scan the same filesystem root
+    # BashTool will execute in, or block if the trusted root is unavailable.
+    if [ -z "${JIMI_BASH_EXEC_CWD:-}" ] || [ ! -d "$JIMI_BASH_EXEC_CWD" ]; then
+      exit 2
+    fi
+    cd "$JIMI_BASH_EXEC_CWD" || exit 2
     if ! hol-guard command test --json -- "$COMMAND" >"$STDOUT_FILE" 2>"$STDERR_FILE"; then
       cat "$STDERR_FILE" >&2
       exit 2
