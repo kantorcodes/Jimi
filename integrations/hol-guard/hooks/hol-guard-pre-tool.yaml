@@ -25,7 +25,17 @@ execution:
     import json
     import sys
 
-    payload = json.load(sys.stdin)
+    # Duplicate input keys are ambiguous between JSON consumers. Deny rather
+    # than inspect a different command than the actual Bash executor.
+    def reject_duplicate_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise SystemExit(2)
+            result[key] = value
+        return result
+
+    payload = json.load(sys.stdin, object_pairs_hook=reject_duplicate_keys)
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):
         raise SystemExit(2)
