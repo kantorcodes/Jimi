@@ -30,7 +30,7 @@ execution:
     if not isinstance(tool_input, dict):
         raise SystemExit(2)
     command = tool_input.get("command")
-    if not isinstance(command, str) or not command.strip():
+    if not isinstance(command, str) or not command.strip() or "\x00" in command:
         raise SystemExit(2)
     sys.stdout.write(command)
     ' >"$COMMAND_FILE"; then
