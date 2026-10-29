@@ -100,11 +100,22 @@ public class ExecutionSpec {
     private boolean continueOnFailure = false;
 
     /**
+     * Block protected PRE_TOOL_USE calls if this hook cannot obtain a decision.
+     * Other hooks retain the existing nonblocking-error default.
+     */
+    @Builder.Default
+    private boolean failClosed = false;
+
+    /**
      * 验证配置有效性
      */
     public void validate() {
         if (type == null || type.trim().isEmpty()) {
             throw new IllegalArgumentException("Execution type is required");
+        }
+
+        if (failClosed && async) {
+            throw new IllegalArgumentException("Fail-closed hooks must execute synchronously");
         }
 
         switch (type) {
