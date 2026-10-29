@@ -191,11 +191,24 @@ public class HookRegistry {
 
         // 依次执行所有匹配的 Hook (按优先级顺序，非阻塞)
         return Flux.fromIterable(matchedHooks)
-                .concatMap(hook -> executor.executeWithResult(hook, context)
-                        .onErrorResume(e -> {
-                            log.error("Hook execution failed: {}", hook.getName(), e);
-                            return Mono.empty();
-                        }))
+                .concatMap(hook -> {
+                    // Opt-in only: ordinary hooks retain their existing nonblocking
+                    // error semantics. A protected PRE_TOOL_USE call must not run
+                    // when its configured decision hook times out or fails.
+                    boolean failClosed = type == HookType.PRE_TOOL_USE
+                            && hook.getExecution().isFailClosed();
+                    HookExecutor.HookResult failure = HookExecutor.HookResult.blocked(
+                            "Fail-closed pre-tool hook did not authorize execution",
+                            "Fail-closed pre-tool hook did not authorize execution");
+                    return Mono.defer(() -> executor.executeWithResult(hook, context))
+                            .map(result -> failClosed && !result.isSuccess() && !result.isBlocked()
+                                    ? failure : result)
+                            .switchIfEmpty(failClosed ? Mono.just(failure) : Mono.empty())
+                            .onErrorResume(e -> {
+                                log.error("Hook execution failed: {}", hook.getName(), e);
+                                return failClosed ? Mono.just(failure) : Mono.empty();
+                            });
+                })
                 .collectList();
     }
     
