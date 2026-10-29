@@ -237,6 +237,13 @@ public class HookExecutor {
                 if (context.getAgentName() != null) {
                     env.put("HOOK_AGENT_NAME", context.getAgentName());
                 }
+                // BashTool's ProcessBuilder inherits the JVM's current directory.
+                // The Guard hook must classify relative paths against that same
+                // filesystem root rather than HookContext.workDir.
+                if ("BashTool".equals(context.getToolName())) {
+                    env.put("JIMI_BASH_EXEC_CWD",
+                            Path.of("").toAbsolutePath().normalize().toString());
+                }
 
                 ProcessBuilder processBuilder = new ProcessBuilder("/bin/bash", "-c", script);
                 if (context.getWorkDir() != null) {
