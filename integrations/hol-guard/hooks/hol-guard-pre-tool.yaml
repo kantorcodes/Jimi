@@ -51,11 +51,20 @@ execution:
 
     with open(sys.argv[1], encoding="utf-8") as response_file:
         raw = response_file.read().strip()
+    def reject_duplicate_keys(pairs):
+        # A later allow must not overwrite an earlier deny/review value.
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key in Guard response")
+            result[key] = value
+        return result
+
     try:
-        # Only one complete JSON document can authorize a protected tool.
-        # Diagnostics or a second verdict on stdout must fail closed.
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
+        # Only one complete unambiguous JSON document may authorize a tool.
+        # Reject duplicate keys in both top-level and nested verdicts.
+        payload = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+    except (json.JSONDecodeError, ValueError):
         payload = None
 
     if not isinstance(payload, dict):
