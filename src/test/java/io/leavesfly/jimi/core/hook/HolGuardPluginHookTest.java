@@ -69,6 +69,8 @@ class HolGuardPluginHookTest {
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "conflicting-verdicts",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
+        assertEquals(2, runHook(script, binDir, "duplicate-top-level-decision", multilineCommand));
+        assertEquals(2, runHook(script, binDir, "duplicate-nested-decision", multilineCommand));
         assertEquals(2, runHook(script, binDir, "diagnostic-single",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "null-policy-envelope",
@@ -152,6 +154,14 @@ class HolGuardPluginHookTest {
                   conflicting-verdicts)
                     printf '%s\\n' '{\"minimum_action\":\"review\",\"classification\":{\"explicitly_benign\":false}}'
                     printf '%s\\n' '{\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  duplicate-top-level-decision)
+                    printf '%s\\n' '{\"minimum_action\":\"review\",\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  duplicate-nested-decision)
+                    printf '%s\\n' '{\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":false,\"explicitly_benign\":true}}'
                     exit 0
                     ;;
                   diagnostic-single)
