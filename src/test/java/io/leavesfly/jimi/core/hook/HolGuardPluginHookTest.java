@@ -105,6 +105,22 @@ class HolGuardPluginHookTest {
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\"}"));
     }
 
+    @Test
+    void guardInspectsBashToolExecutionDirectory() throws Exception {
+        Assumptions.assumeTrue(Files.isExecutable(Path.of("/bin/bash")));
+        String script = loadHookScript();
+        Path binDir = createGuardFixture();
+        Path actualBashCwd = Files.createDirectory(tempDir.resolve("actual-bash-cwd"));
+        String input = "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\","
+                + "\"tool_input\":{\"command\":\"git status\"}}";
+
+        // The hook launcher starts in tempDir, but BashTool will execute from
+        // actualBashCwd. Inspect the command in the execution directory.
+        assertEquals(0, runHook(script, binDir, "verify-cwd", input, actualBashCwd));
+        // Missing authoritative cwd must block even an otherwise benign command.
+        assertEquals(2, runHook(script, binDir, "explicit-allow", input, null));
+    }
+
     @SuppressWarnings("unchecked")
     private String loadHookScript() throws IOException {
         Path hookPath = Path.of("integrations", "hol-guard", "hooks", "hol-guard-pre-tool.yaml");
@@ -122,6 +138,11 @@ class HolGuardPluginHookTest {
                 case \"$HOL_GUARD_FIXTURE\" in
                   explicit-allow)
                     printf '%s\\n' '{\"minimum_action\":\"allow\",\"classification\":{\"explicitly_benign\":true}}'
+                    exit 0
+                    ;;
+                  verify-cwd)
+                    [ "$(pwd -P)" = "$HOL_GUARD_EXPECTED_CWD" ] || exit 1
+                    printf '%s\\n' '{"minimum_action":"allow","classification":{"explicitly_benign":true}}'
                     exit 0
                     ;;
                   preserve-newline)
@@ -217,11 +238,24 @@ class HolGuardPluginHookTest {
     }
 
     private int runHook(String script, Path binDir, String fixture, String stdin) throws Exception {
+        return runHook(script, binDir, fixture, stdin, tempDir);
+    }
+
+    private int runHook(String script, Path binDir, String fixture, String stdin,
+                        Path bashExecutionDirectory) throws Exception {
         ProcessBuilder processBuilder = new ProcessBuilder("/bin/bash", "-c", script);
         processBuilder.directory(tempDir.toFile());
         String existingPath = processBuilder.environment().getOrDefault("PATH", "");
         processBuilder.environment().put("PATH", binDir + ":" + existingPath);
         processBuilder.environment().put("HOL_GUARD_FIXTURE", fixture);
+        if (bashExecutionDirectory == null) {
+            processBuilder.environment().remove("JIMI_BASH_EXEC_CWD");
+        } else {
+            processBuilder.environment().put("JIMI_BASH_EXEC_CWD",
+                    bashExecutionDirectory.toString());
+            processBuilder.environment().put("HOL_GUARD_EXPECTED_CWD",
+                    bashExecutionDirectory.toString());
+        }
 
         Process process = processBuilder.start();
         process.getOutputStream().write(stdin.getBytes(StandardCharsets.UTF_8));
