@@ -57,8 +57,8 @@ class HolGuardPluginHookTest {
         assertEquals(2, runHook(script, binDir, "explicit-allow", nulCommand));
         // A literal raw NUL is invalid JSON; do not let Bash silently remove it
         // before the hook parser sees the original bytes.
-        String rawNulInput = "{\\"hook_event_name\\":\\"PRE_TOOL_USE\\",\\"tool_name\\":\\"BashTool\\","
-                + "\\"tool_input\\":{\\"command\\":\\"git status" + (char) 0 + " && rm -rf build\\"}}";
+        String rawNulInput = "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\","
+                + "\"tool_input\":{\"command\":\"git status" + (char) 0 + " && rm -rf build\"}}";
         assertEquals(2, runHook(script, binDir, "explicit-allow", rawNulInput));
         assertEquals(2, runHook(script, binDir, "implicit-allow",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
