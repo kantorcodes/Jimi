@@ -1,7 +1,7 @@
 name: hol-guard
 version: 0.1.0
 description: HOL_GUARD_PRE_TOOL_USE
-author: Hashgraph Online
+author: HOL
 homepage: https://hol.org/guard
 repository: https://github.com/hashgraph-online/hol-guard
 keywords:
