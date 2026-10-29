@@ -24,6 +24,20 @@ class HolGuardPluginHookTest {
     Path tempDir;
 
     @Test
+    @SuppressWarnings("unchecked")
+    void guardHookUsesFailClosedSynchronousExecution() throws IOException {
+        Path hookPath = Path.of("integrations", "hol-guard", "hooks", "hol-guard-pre-tool.yaml");
+        Map<String, Object> root = new Yaml().load(Files.readString(hookPath, StandardCharsets.UTF_8));
+        Map<String, Object> execution = (Map<String, Object>) root.get("execution");
+        ExecutionSpec spec = new ObjectMapper().convertValue(execution, ExecutionSpec.class);
+
+        spec.validate();
+        assertEquals("script", spec.getType());
+        assertEquals(false, spec.isAsync());
+        assertTrue(spec.isFailClosed(), "HOL Guard must block on hook errors and timeouts");
+    }
+
+    @Test
     void onlyExplicitBenignAllowPasses() throws Exception {
         Assumptions.assumeTrue(Files.isExecutable(Path.of("/bin/bash")));
         String script = loadHookScript();
