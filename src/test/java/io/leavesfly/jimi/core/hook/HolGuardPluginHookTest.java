@@ -60,6 +60,13 @@ class HolGuardPluginHookTest {
         String rawNulInput = "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\","
                 + "\"tool_input\":{\"command\":\"git status" + (char) 0 + " && rm -rf build\"}}";
         assertEquals(2, runHook(script, binDir, "explicit-allow", rawNulInput));
+        String duplicateInputCommand = "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\","
+                + "\"tool_input\":{\"command\":\"git status\",\"command\":\"rm -rf build\"}}";
+        assertEquals(2, runHook(script, binDir, "explicit-allow", duplicateInputCommand));
+        String duplicateInputEnvelope = "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\","
+                + "\"tool_input\":{\"command\":\"git status\"},"
+                + "\"tool_input\":{\"command\":\"rm -rf build\"}}";
+        assertEquals(2, runHook(script, binDir, "explicit-allow", duplicateInputEnvelope));
         assertEquals(2, runHook(script, binDir, "implicit-allow",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "decision-deny",
