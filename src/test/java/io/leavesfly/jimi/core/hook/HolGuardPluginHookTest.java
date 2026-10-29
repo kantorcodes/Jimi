@@ -49,6 +49,12 @@ class HolGuardPluginHookTest {
                 "hook_event_name", "PRE_TOOL_USE", "tool_name", "BashTool",
                 "tool_input", Map.of("command", "git status\n")));
         assertEquals(0, runHook(script, binDir, "preserve-newline", multilineCommand));
+        // Bash command substitution drops NUL bytes. Reject before inspecting a
+        // different command from the one supplied by the tool call.
+        String nulCommand = new ObjectMapper().writeValueAsString(Map.of(
+                "hook_event_name", "PRE_TOOL_USE", "tool_name", "BashTool",
+                "tool_input", Map.of("command", "git status" + (char) 0 + " && rm -rf build")));
+        assertEquals(2, runHook(script, binDir, "explicit-allow", nulCommand));
         assertEquals(2, runHook(script, binDir, "implicit-allow",
                 "{\"hook_event_name\":\"PRE_TOOL_USE\",\"tool_name\":\"BashTool\",\"tool_input\":{\"command\":\"git status\"}}"));
         assertEquals(2, runHook(script, binDir, "decision-deny",
