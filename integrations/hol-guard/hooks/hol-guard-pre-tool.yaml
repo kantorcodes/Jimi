@@ -62,6 +62,35 @@ execution:
     if [ -z "${JIMI_BASH_EXEC_CWD:-}" ] || [ ! -d "$JIMI_BASH_EXEC_CWD" ]; then
       exit 2
     fi
+    # A caller can also prepend an absolute project-owned binary or symlink
+    # to PATH. Reject both aliases and resolved files under the outer Git root.
+    # Resolve from the pinned interpreter before changing to the Bash workspace.
+    if ! "$PYTHON_BIN" - "$JIMI_BASH_EXEC_CWD" "$PYTHON_BIN" "$GUARD_BIN" <<'PY'
+    import os
+    import sys
+
+    workspace = os.path.realpath(sys.argv[1])
+    cursor = workspace
+    project_root = None
+    while True:
+        if os.path.lexists(os.path.join(cursor, ".git")):
+            project_root = cursor
+        parent = os.path.dirname(cursor)
+        if parent == cursor:
+            break
+        cursor = parent
+    if project_root is not None:
+        for executable in sys.argv[2:]:
+            for candidate in (os.path.abspath(executable), os.path.realpath(executable)):
+                try:
+                    if os.path.commonpath((project_root, candidate)) == project_root:
+                        raise SystemExit(2)
+                except ValueError:
+                    raise SystemExit(2)
+    PY
+    then
+      exit 2
+    fi
     cd "$JIMI_BASH_EXEC_CWD" || exit 2
     if ! "$GUARD_BIN" command test --json -- "$COMMAND" >"$STDOUT_FILE" 2>"$STDERR_FILE"; then
       cat "$STDERR_FILE" >&2
