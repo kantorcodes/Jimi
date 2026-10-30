@@ -15,13 +15,19 @@ execution:
   timeout: 10
   script: |
     set -u
+    # Pin both executables before moving into the agent-controlled Bash cwd.
+    # Relative PATH hits can be rebound after cd, so fail closed on them.
+    PYTHON_BIN=$(command -v python3 2>/dev/null) || exit 2
+    GUARD_BIN=$(command -v hol-guard 2>/dev/null) || exit 2
+    case "$PYTHON_BIN" in /*) ;; *) exit 2 ;; esac
+    case "$GUARD_BIN" in /*) ;; *) exit 2 ;; esac
     # Read stdin directly: Bash command substitution silently drops raw NULs.
     COMMAND_FILE=$(mktemp)
     STDOUT_FILE=$(mktemp)
     STDERR_FILE=$(mktemp)
     trap 'rm -f "$COMMAND_FILE" "$STDOUT_FILE" "$STDERR_FILE"' EXIT
 
-    if ! python3 -c '
+    if ! "$PYTHON_BIN" -c '
     import json
     import sys
 
@@ -57,12 +63,12 @@ execution:
       exit 2
     fi
     cd "$JIMI_BASH_EXEC_CWD" || exit 2
-    if ! hol-guard command test --json -- "$COMMAND" >"$STDOUT_FILE" 2>"$STDERR_FILE"; then
+    if ! "$GUARD_BIN" command test --json -- "$COMMAND" >"$STDOUT_FILE" 2>"$STDERR_FILE"; then
       cat "$STDERR_FILE" >&2
       exit 2
     fi
 
-    MINIMUM_ACTION=$(python3 - "$STDOUT_FILE" <<'PY'
+    MINIMUM_ACTION=$("$PYTHON_BIN" - "$STDOUT_FILE" <<'PY'
     import json
     import sys
 
