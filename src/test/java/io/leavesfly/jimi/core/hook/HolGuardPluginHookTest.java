@@ -133,9 +133,11 @@ class HolGuardPluginHookTest {
         process.environment().put("HOL_GUARD_FAKE_MARKER", marker.toString());
 
         Process child = process.start();
-        child.getOutputStream().write(("{\\"hook_event_name\\":\\"PRE_TOOL_USE\\"," +
-                "\\"tool_name\\":\\"BashTool\\",\\"tool_input\\":{\\"command\\":\\"git status\\"}}")
-                .getBytes(StandardCharsets.UTF_8));
+        String input = """
+                {"hook_event_name":"PRE_TOOL_USE","tool_name":"BashTool",
+                 "tool_input":{"command":"git status"}}
+                """;
+        child.getOutputStream().write(input.getBytes(StandardCharsets.UTF_8));
         child.getOutputStream().close();
         assertTrue(child.waitFor(Duration.ofSeconds(5).toMillis(), TimeUnit.MILLISECONDS));
         child.getInputStream().readAllBytes();
